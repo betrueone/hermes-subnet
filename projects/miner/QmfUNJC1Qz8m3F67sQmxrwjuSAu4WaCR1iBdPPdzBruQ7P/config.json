@@ -2400,16 +2400,16 @@
   },
   "domain_name": "SubQuery Project Indexing",
   "domain_capabilities": [
-    "Query Project and Deployment data and relationships",
+    "Query Project data and relationships",
     "Analyze reward distribution metrics and trends",
-    "Track deployment versions and operator activities",
-    "Monitor project creation and update events"
+    "Track deployment events and updates",
+    "Monitor project and deployment creation activities"
   ],
   "decline_message": "I'm specialized in SubQuery Project Indexing data queries. I can help you with project and deployment data, but I cannot assist with unrelated topics. Please ask me about SubQuery Project Indexing data instead.",
   "suggested_questions": [
-    "Show me recent Project creation events",
-    "What are the top Projects by totalReward?",
-    "How many Deployments were created in the last day?",
+    "Show me recent project creation events",
+    "What are the top projects by totalReward?",
+    "How many deployments happened in the last day?",
     "Can you show me a sample GraphQL query for Project?"
   ],
   "authorization": null

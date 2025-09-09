@@ -2398,19 +2398,19 @@
     },
     "specVersion": "1.0.0"
   },
-  "domain_name": "SubQuery Network Projects & Deployments on Base (8453)",
+  "domain_name": "Unknown Project \u2014 SubQuery Projects & Deployments Index",
   "domain_capabilities": [
-    "Query Project entities: filter/sort by owner, type, createdTimestamp, updatedTimestamp; retrieve metadata, deploymentId, deploymentMetadata, totalReward, totalBoost, totalAllocation, boostAllocationRatio, createdBlock, and lastEvent; expand related deployments",
-    "Query Deployment entities: list deployments per project; fetch id (deployment IPFS), metadata, createdTimestamp; traverse to parent Project and related indexers (IndexerDeployment) and plans",
-    "Analyze incentive metrics across projects: rank by totalReward, compare totalBoost vs totalAllocation, and review boostAllocationRatio for selected projects over time using timestamps",
-    "Monitor Base (8453) activity: find newly created or recently updated projects/deployments and inspect latest event markers via lastEvent and createdBlock"
+    "Query Project entities and their relationships (fields: id, owner, type, metadata, deploymentId, deploymentMetadata, createdTimestamp, updatedTimestamp, createdBlock, lastEvent) and enumerate associated Deployments",
+    "Query Deployment entities and their related IndexerDeployment and Plan records (fields: id, metadata, project, createdTimestamp, createdBlock, lastEvent) to inspect code versions and which indexers/operators are running them",
+    "Analyze reward and allocation metrics across projects and deployments (totalReward, totalBoost, totalAllocation, boostAllocationRatio) to compare consumer boost vs operator+delegator allocations and evaluate distribution ratios",
+    "Monitor lifecycle and event activity for projects and deployments (createdTimestamp, updatedTimestamp, createdBlock, lastEvent) and filter by enums such as ProjectType to track deployment versioning and operator rollout"
   ],
-  "decline_message": "I'm specialized in Unknown Project data queries for SubQuery Network projects and deployments on Base (8453). I can help you with Project and Deployment records, incentive metrics (rewards/boosts/allocations), timestamps, and their relationships, but I cannot assist with unrelated topics like token prices, generic Ethereum transactions, or NFTs. Please ask me about Unknown Project data instead.",
+  "decline_message": "I'm specialized in Unknown Project data queries. I can help you with Project and Deployment metadata, reward and boost allocation metrics (totalReward, totalBoost, totalAllocation, boostAllocationRatio), indexer deployment and Plan relationships, and lifecycle/event timestamps (createdTimestamp, updatedTimestamp, lastEvent). I cannot assist with raw Ethereum transaction contents, private key management, or blockchain analysis outside the scope of this SubQuery index. Please ask me about Unknown Project data instead.",
   "suggested_questions": [
-    "List the latest 10 Projects by updatedTimestamp with totalReward, totalBoost, totalAllocation, and boostAllocationRatio",
-    "Which Projects on chain 8453 have the highest totalReward or boostAllocationRatio?",
-    "Show all Deployments for a given Project ID with their metadata and createdTimestamp",
-    "Can you show me a sample GraphQL query to fetch a Project with its Deployments and incentive metrics?"
+    "Show me the most recently created Project records and their totalReward and totalBoost values",
+    "Which Projects have the highest totalReward or highest boostAllocationRatio?",
+    "List Deployments for a given Project ID and show associated indexer counts, createdTimestamp, and lastEvent",
+    "Can you show a sample GraphQL query to fetch a Project by id with its Deployments and reward/allocation fields?"
   ],
   "authorization": null
 }

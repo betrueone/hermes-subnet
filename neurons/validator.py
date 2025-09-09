@@ -188,13 +188,13 @@ class Validator(BaseNeuron):
 
             logger.info("\n🤖 generate synthetic challenge: {}", question, traceId=trace_id)
 
-                # generate ground truth
-                start_time = time.perf_counter()
-                ground_truth: str = await self.generate_ground_truth(cid, question)
-                if not ground_truth:
-                    project_score.append([1] * len(uids))
-                    logger.warning("Failed to generate ground truth.", traceId=trace_id)
-                    continue
+            # generate ground truth
+            start_time = time.perf_counter()
+            ground_truth: str = await self.generate_ground_truth(cid, question)
+            if not ground_truth:
+                project_score.append([1] * len(uids))
+                logger.warning("Failed to generate ground truth.", traceId=trace_id)
+                continue
 
             # TODO: check ground truth has real content
             
@@ -202,35 +202,35 @@ class Validator(BaseNeuron):
             ground_cost = end_time - start_time
             logger.info("\n🤖 generate ground_truth: {} cost: {}s", ground_truth, ground_cost, traceId=trace_id)
 
-                logger.info(f"query miners: {uids}")
-                # query all miner
-                tasks = []
-                for uid in uids:
-                    tasks.append(
-                        asyncio.create_task(self.query_miner(uid, cid, trace_id, question, ground_truth))
-                    )
-                responses = await asyncio.gather(*tasks)
+            logger.info(f"query miners: {uids}")
+            # query all miner
+            tasks = []
+            for uid in uids:
+                tasks.append(
+                    asyncio.create_task(self.query_miner(uid, cid, trace_id, question, ground_truth))
+                )
+            responses = await asyncio.gather(*tasks)
 
-                # score result
-                tasks = []
-                for r in responses:
-                    tasks.append(
-                        asyncio.create_task(self.get_score(ground_truth, r))
-                    )
-                scores = await asyncio.gather(*tasks)
-                truth_scores = [float(s) for s in scores]
-                logger.info(f" ground_truth scores: {truth_scores}")
+            # score result
+            tasks = []
+            for r in responses:
+                tasks.append(
+                    asyncio.create_task(self.get_score(ground_truth, r))
+                )
+            scores = await asyncio.gather(*tasks)
+            truth_scores = [float(s) for s in scores]
+            logger.info(f" ground_truth scores: {truth_scores}")
 
-                elapse_time = [r.elapsed_time for r in responses]
-                logger.info(f" elapse_time: {elapse_time}")
+            elapse_time = [r.elapsed_time for r in responses]
+            logger.info(f" elapse_time: {elapse_time}")
 
-                elapse_weights = [utils.get_elapse_weight_quadratic(r.elapsed_time, ground_cost) for r in responses]
-                logger.info(f" elapse_weights: {elapse_weights}")
+            elapse_weights = [utils.get_elapse_weight_quadratic(r.elapsed_time, ground_cost) for r in responses]
+            logger.info(f" elapse_weights: {elapse_weights}")
 
-                zip_scores = [s * w for s, w in zip(truth_scores, elapse_weights)]
-                logger.info(f" zip scores: {zip_scores}")
+            zip_scores = [s * w for s, w in zip(truth_scores, elapse_weights)]
+            logger.info(f" zip scores: {zip_scores}")
 
-                project_score.append(zip_scores)
+            project_score.append(zip_scores)
 
 
             project_score = np.array(project_score)
