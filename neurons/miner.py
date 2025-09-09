@@ -64,7 +64,7 @@ class Miner(BaseNeuron):
         super().start()
 
         self.axon = bt.axon(
-            wallet=self.settings.wallet, 
+            wallet=self.settings.miner_wallet, 
             port=self.settings.miner_port,
             ip=self.settings.external_ip,
             external_ip=self.settings.external_ip,

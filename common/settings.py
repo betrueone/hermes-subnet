@@ -59,17 +59,30 @@ class Settings:
         if self._wallet is not None:
             return self._wallet
 
-        wallet_name = os.environ.get("WALLET_NAME")
+        wallet_name = os.environ.get("VALIDATOR_WALLET_NAME")
         hotkey = os.environ.get("HOTKEY")
         wallet_path = os.environ.get("WALLET_PATH")
         
         if wallet_path:
-            logger.info(f"Instantiating wallet with name: {wallet_name}, hotkey: {hotkey}, path: {wallet_path}")
+            logger.info(f"Instantiating validator wallet with name: {wallet_name}, hotkey: {hotkey}, path: {wallet_path}")
             self._wallet = bt.wallet(name=wallet_name, hotkey=hotkey, path=wallet_path)
         else:
-            logger.info(f"Instantiating wallet with name: {wallet_name}, hotkey: {hotkey}")
+            logger.info(f"Instantiating validator wallet with name: {wallet_name}, hotkey: {hotkey}")
             self._wallet = bt.wallet(name=wallet_name, hotkey=hotkey)
         return self._wallet
+
+    @property
+    def miner_wallet(self):
+        miner_wallet_name = os.environ.get("MINER_WALLET_NAME")
+        hotkey = os.environ.get("HOTKEY")
+        wallet_path = os.environ.get("WALLET_PATH")
+        
+        if wallet_path:
+            logger.info(f"Instantiating miner wallet with name: {miner_wallet_name}, hotkey: {hotkey}, path: {wallet_path}")
+            return bt.wallet(name=miner_wallet_name, hotkey=hotkey, path=wallet_path)
+        else:
+            logger.info(f"Instantiating miner wallet with name: {miner_wallet_name}, hotkey: {hotkey}")
+            return bt.wallet(name=miner_wallet_name, hotkey=hotkey)
 
     @property
     def netuid(self) -> int:
@@ -77,11 +90,11 @@ class Settings:
 
     @property
     def port(self) -> int:
-        return int(os.environ.get("PORT", "8085"))
+        return int(os.environ.get("VALIDATOR_PORT", "8085"))
 
     @property
     def miner_port(self) -> int:
-        return int(os.environ.get("MINER_PORT", str(self.port + 1)))
+        return int(os.environ.get("MINER_PORT", "8086"))
 
     @property
     def external_ip(self) -> str | None:
