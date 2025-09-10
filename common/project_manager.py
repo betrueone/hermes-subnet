@@ -261,7 +261,7 @@ PROJECT INFO:
 
 GRAPHQL SCHEMA:
 ```graphql
-{schema_preview}
+{schema_content}
 ```
 
 Based on the project info and GraphQL schema entities, generate:

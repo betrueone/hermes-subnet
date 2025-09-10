@@ -168,3 +168,5 @@ testing/
 .vscode/settings.json
 
 .DS_Store
+
+projects/

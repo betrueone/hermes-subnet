@@ -1,7 +1,6 @@
 from langchain.prompts import PromptTemplate
 
 
-# 问的很泛, 不好. 都是方法论, 没有具体的数值问题
 synthetic_challenge_template_V1 = """
 You are a question generator for database schema analysis.
 
@@ -21,8 +20,11 @@ Your task:
 7. Focus on query patterns and schema structure, not fictional data.
 8. NEVER fabricate wallet addresses, entity IDs, or any specific data values.
 9. ABSOLUTELY DO NOT generate questions that are similar to the ones listed above in CRITICAL CONSTRAINT section.
-
-
+10. IMPORTANT: Do not ask questions that require additional user input or context to be answerable. Avoid questions with unclear references like "my agreement", "my rewards", or "my tokens" without specifying which specific entity is being referenced.
+11. Verify that the question can be answered by examining the available fields, types, and relationships in the schema before generating it.
+12. Do NOT ask hypothetical questions (like "What would happen if...", "How might...", "What could...", "For a specified ..."). Only ask direct factual questions about actual data.
+13. Do NOT ask question which has placeholders in the question.
+14. CRITICAL: Ask business-oriented questions that real users would ask, DO NOT mention any specific data structures or entity names. Real users don't know about backend schema details. Instead, ask about business concepts.
 Output: [Question only, no explanations]
 """
 
