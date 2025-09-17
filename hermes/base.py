@@ -1,20 +1,13 @@
 from abc import ABC, abstractmethod
-import logging
-import os
 import sys
-from typing import Any
-
 from loguru import logger
 from bittensor.core.extrinsics.serving import serve_extrinsic
+
 from common.settings import Settings
-from common.utils import try_get_external_ip, configure_loguru
-import agent.graphql_agent as subAgent
+from common.utils import try_get_external_ip
 
 
 class BaseNeuron(ABC):
-    # serverAgent: Any
-    non_stream_chat_completion: Any
-    # exampleAgent: Any
     settings: Settings
     uid: int
     
@@ -26,10 +19,7 @@ class BaseNeuron(ABC):
         '''
 
 
-    def __init__(self, *args, **kwargs):
-        # Configure loguru first before any logging
-        # configure_loguru(*args, **kwargs)
-        
+    def __init__(self):
         Settings.load_env_file(self.role)
         self.settings = Settings()
 

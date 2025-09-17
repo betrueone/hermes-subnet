@@ -131,7 +131,7 @@ class WorkloadManager:
             total_score = 0.5 * quality_ema + 0.5 * normalized_workload
             scores[idx] = total_score
 
-        logger.info(f"[WorkloadManager] - {challenge_id}  workload_counts: {workload_counts}, log_quality_scores: {log_quality_scores}, workload_score: {scores}")
+        logger.info(f"[WorkloadManager] - {challenge_id} workload_counts: {workload_counts}, quality_scores: {log_quality_scores}, compute_workload_score: {scores}")
         return scores
 
     async def compute_organic_task(self):
@@ -139,7 +139,7 @@ class WorkloadManager:
             await asyncio.sleep(self.organic_task_compute_interval)
             try:
                 for i in range(self.organic_task_concurrency):
-                    logger.info(f"[WorkloadManager] Round {i+1}/{self.organic_task_concurrency} of computing organic workload scores")
+                    logger.debug(f"[WorkloadManager] Round {i+1}/{self.organic_task_concurrency} of computing organic workload scores")
                     
                     if self.organic_score_queue:
                         miner_uid, resp_dict = self.organic_score_queue.pop(0)
@@ -147,7 +147,7 @@ class WorkloadManager:
 
                         miner_uid_work_load = await self.collect(miner_uid)
                         if miner_uid_work_load % self.organic_task_sample_rate != 0:
-                            logger.info(f"[WorkloadManager] Skipping organic task computation for miner: {miner_uid} at count {miner_uid_work_load}")
+                            logger.debug(f"[WorkloadManager] Skipping organic task computation for miner: {miner_uid} at count {miner_uid_work_load}")
                             continue
 
                         q = response.completion.messages[-1].content

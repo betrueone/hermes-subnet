@@ -31,6 +31,6 @@ class EMAUpdater:
             new_scores[uid] = (1 - self.alpha) * last_val + self.alpha * cur_val
 
         self.last_scores = new_scores
-        logger.info(f"EMA updated scores: {self.last_scores}")
+        # logger.info(f"EMA updated scores: {self.last_scores}")
 
         return new_scores

@@ -1,74 +1,9 @@
-import json
 import os
-import logging
 import signal
-import sys
 import httpx
 from loguru import logger
 import netaddr
 import requests
-
-
-class InterceptHandler(logging.Handler):
-    """Intercept standard library logging and redirect to loguru."""
-    
-    def emit(self, record: logging.LogRecord) -> None:
-        # Get corresponding Loguru level if it exists
-        try:
-            level = logger.level(record.levelname).name
-        except ValueError:
-            level = record.levelno
-
-        # Find caller from where originated the logged message
-        frame, depth = sys._getframe(6), 6
-        while frame and frame.f_code.co_filename == logging.__file__:
-            frame = frame.f_back
-            depth += 1
-
-        # Use raw=True to prevent format string processing issues
-        logger.opt(depth=depth, exception=record.exc_info, raw=True).log(level, record.getMessage() + "\n")
-
-
-def configure_loguru(
-        file: str = None,
-        level: str = "INFO",
-        json: bool = False
-):
-    """
-    Configure loguru to intercept standard logging and suppress noisy third-party libraries.
-    """
-    # Remove default loguru handler and add custom one
-    logger.remove()
-    logger.add(
-        sys.stderr,
-        level=level,
-        format="<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> | <level>{level}</level> | <level>{message}</level>"
-    )
-
-    if file:
-        logger.add(
-            file, 
-            level="INFO", 
-            rotation="00:00", # New file at 0:00 every day
-            retention="15 days",
-            serialize=json, # If set, format will be ignored
-            format="{time:YYYY-MM-DD HH:mm:ss.SSS} | {level} | {extra} | {message}",
-        )
-    
-    # Intercept standard library logging
-    logging.basicConfig(handlers=[InterceptHandler()], level=0, force=True)
-    
-    # Configure specific loggers to reduce noise
-    logging.getLogger("httpx").setLevel(logging.ERROR)
-    logging.getLogger("urllib3").setLevel(logging.WARNING) 
-    logging.getLogger("asyncio").setLevel(logging.WARNING)
-    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
-    
-    # Configure uvicorn loggers to use loguru format
-    logging.getLogger("uvicorn").setLevel(logging.INFO)
-    logging.getLogger("uvicorn.error").setLevel(logging.INFO)
-    
-    logger.info("Configured loguru with standard library interception")
 
 
 def try_get_external_ip() -> str | None:
@@ -91,7 +26,6 @@ def get_elapse_weight_quadratic(elapsed_time: float, ground_truth_cost: float) -
     weight = 1.0 / ((1.0 + time_ratio) ** 2)
 
     return min(1.0, max(0.0, weight))
-
 
 async def fetch_from_ipfs(cid: str, path: str = "") -> str:
     """
@@ -200,6 +134,7 @@ def kill_process_group():
         os.killpg(os.getpgid(0), signal.SIGKILL)
     except Exception as e:
         logger.error(f"Failed to kill process group: {e}")
+
 
 if __name__ == "__main__":
     ground_truth_cost = 15.0

@@ -8,6 +8,9 @@ import bittensor as bt
 from langchain_openai import ChatOpenAI
 from loguru import logger
 from multiprocessing.synchronize import Event
+
+import numpy as np
+import torch
 from common.agent_manager import AgentManager
 from common.protocol import SyntheticNonStreamSynapse
 from common.settings import Settings
@@ -29,6 +32,8 @@ class ChallengeManager:
     scorer_manager: ScorerManager
     workload_manager: WorkloadManager
     event_stop: Event
+    scores: torch.Tensor
+
 
     def __init__(
         self, 
@@ -45,6 +50,7 @@ class ChallengeManager:
 
         # Configure synthetic challenge loop interval (default: 10 minutes)
         self.challenge_interval = int(os.getenv("CHALLENGE_INTERVAL", 600))  # seconds
+        self.forward_miner_timeout = int(os.getenv("FORWARD_MINER_TIMEOUT", 60 * 3))  # seconds
         logger.info(f"[ChallengeManager] Synthetic challenge interval set to {self.challenge_interval} seconds")
 
         self.uid = uid
@@ -65,7 +71,6 @@ class ChallengeManager:
         self.agent_manager = AgentManager(
             save_project_dir=Path(save_project_dir),
             llm_synthetic=self.llm_synthetic,
-            llm_score=self.llm_score
         )
 
         self.scorer_manager = ScorerManager(llm_score=self.llm_score)
@@ -76,6 +81,12 @@ class ChallengeManager:
 
         self.event_stop = event_stop
 
+        self._last_set_weight_time = time.time()
+        self.scores = torch.zeros_like(torch.tensor(self.settings.metagraph.S), dtype=torch.float32)
+        self.device = 'cpu'
+        self.set_weight_interval = int(os.getenv("SET_WEIGHT_INTERVAL", 60 * 30))  # seconds
+        logger.info(f"[ChallengeManager] Set weight interval set to {self.set_weight_interval} seconds")
+
         logger.info(f"[ChallengeManager] Using LLM model: {synthetic_model_name} for synthetic challenge")
         logger.info(f"[ChallengeManager] Using LLM model: {score_model_name} for scoring")
 
@@ -83,10 +94,16 @@ class ChallengeManager:
         mode = os.getenv("PROJECT_PULL_MODE", "pull")
 
         # pull projects & init agents
-        await self.agent_manager.start(mode == "pull")
+        await self.agent_manager.start(mode == "pull", role="validator")
 
-        self.task = asyncio.create_task(self.workload_manager.compute_organic_task())
+        self.task = [
+            asyncio.create_task(self.workload_manager.compute_organic_task()),
+            asyncio.create_task(self.set_weight()),
+            asyncio.create_task(self.challenge_loop())
+        ]
+        await asyncio.gather(*self.task)
 
+    async def challenge_loop(self):
         while not self.event_stop.is_set():
             await asyncio.sleep(self.challenge_interval)
 
@@ -160,7 +177,7 @@ class ChallengeManager:
         success = False
         result = ""
         try:
-            agent = self.agent_manager.get_agent(cid)
+            agent = self.agent_manager.get_graphql_agent(cid)
             if not agent:
                 result = f"No server agent found for cid: {cid}"
             else:
@@ -188,7 +205,7 @@ class ChallengeManager:
                     axons=self.settings.metagraph.axons[uid],
                     synapse=synapse,
                     deserialize=False,
-                    timeout=60*1,
+                    timeout=self.forward_miner_timeout,
                 )
             elapsed_time = t.final_time
             synapse.response = r.response
@@ -212,3 +229,55 @@ class ChallengeManager:
             synapse.error = str(e)
         finally:
             return synapse
+
+    async def set_weight(self):
+        while True:
+            await asyncio.sleep(10)
+            if time.time() - self._last_set_weight_time > self.set_weight_interval:
+                try:
+                    scores_dict = self.scorer_manager.get_last_scores()
+                    uids = list(scores_dict.keys())
+                    scores = list(scores_dict.values())
+                    if not uids:
+                        continue
+                    self._set_weights(uids, scores)
+
+                    self._last_set_weight_time = time.time()
+                except Exception as e:
+                    logger.error(f"[ChallengeManager] Failed to set_weight: {e}")
+
+    def _set_weights(self, uids: list[int], scores: list[float]):
+        logger.info(f"[ChallengeManager] set_weights for uids: {uids}, scores: {scores}")
+
+        scattered_scores: torch.FloatTensor = self.scores.scatter(
+            0, torch.tensor(uids).to(self.device), torch.tensor(scores, dtype=torch.float32).to(self.device)
+        ).to(self.device)
+        
+        logger.info(f"scattered_scores: {scattered_scores}")
+
+        raw_weights = torch.nn.functional.normalize(scattered_scores, p=1, dim=0)
+        logger.info(f"raw_weights: {raw_weights}")
+
+        (
+            processed_weight_uids,
+            processed_weights,
+        ) = bt.utils.weight_utils.process_weights_for_netuid(
+                uids = np.array(self.settings.metagraph.uids, dtype=np.int64),
+                weights = raw_weights.detach().cpu().numpy().astype(np.float32),
+                netuid=self.settings.netuid,
+                subtensor=self.settings.subtensor,
+                metagraph=self.settings.metagraph,
+        )
+        logger.info(f"processed_weight_uids: {processed_weight_uids}")
+        logger.info(f"processed_weights: {processed_weights}")
+
+        [suc, msg] = self.settings.subtensor.set_weights(
+            wallet=self.settings.wallet,
+            netuid=self.settings.netuid,
+            uids=processed_weight_uids,
+            weights=processed_weights,
+            wait_for_finalization=False,
+            version_key=10010,
+        )
+        logger.info(f"processed_weights: {suc, msg}")
+
