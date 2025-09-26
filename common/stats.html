@@ -399,9 +399,9 @@ function createRow(row) {
             detailPop = document.createElement('div');
             detailPop.className = 'response-detail-pop';
             // Status code information
-            const statusCode = row[7];
+            const statusCode = row[8];
             const statusStyle = String(statusCode) !== '200' ? 'color: #dc3545;' : 'color: #28a745;';
-            
+
             detailPop.innerHTML = `
                 <b>Response:</b><br><pre style='max-height:300px;overflow:auto;'>${row[7] || ''}</pre><hr>
                 <b>ID:</b> ${row[0]}<br>
