@@ -207,17 +207,18 @@ class ChallengeManager:
                 challenge_id=challenge_id
             )
             self.synthetic_score[0] = self.scorer_manager.get_last_synthetic_scores()
-            self.round_id += 1
 
             table_formatter.create_synthetic_final_ranking_table(
                 round_id=self.round_id,
                 challenge_id=challenge_id,
                 uids=uids,
+                hotkeys=hotkeys,
                 workload_counts=workload_counts,
                 quality_scores=log_quality_scores,
                 workload_score=workload_score,
                 new_ema_scores=new_ema_scores
             )
+            self.round_id += 1
 
     async def generate_ground_truth(self, cid: str, question: str) -> Tuple[bool, str | None, int]:
         start_time = time.perf_counter()
@@ -233,7 +234,6 @@ class ChallengeManager:
                 success = True
             
                 if not result:
-                    logger.error(f"[ChallengeManager] - {cid} Failed to generate ground truth. {response}")
                     error = utils.try_get_invalid_tool_messages(response.get('messages', []))
                     if error:
                         logger.error(f"[ChallengeManager] - {cid} Failed to generate ground truth. {error}")

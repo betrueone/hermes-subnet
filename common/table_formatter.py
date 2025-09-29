@@ -148,9 +148,9 @@ class TableFormatter:
             else:
                 rstr = f"⚠️ {r.dendrite.status_code}"
                     
-            uid_hotkey = f"{uid}|{r.dendrite.hotkey}" if getattr(r.dendrite, 'hotkey', None) else f"{uid}"
+            # uid_hotkey = f"{uid}|{r.dendrite.hotkey}" if getattr(r.dendrite, 'hotkey', None) else f"{uid}"
             rows.append([
-                uid_hotkey,
+                f"{uid}",
                 f"{rstr}",
                 f"{r.elapsed_time}s",
                 f"{ground_truth_scores[idx]}",
@@ -177,6 +177,7 @@ class TableFormatter:
         round_id: str,
         challenge_id: str,
         uids: list[int],
+        hotkeys: list[str],
         workload_counts: list[int],
         quality_scores: list[list[float]],
         workload_score: list[float],
@@ -187,15 +188,17 @@ class TableFormatter:
         for idx, uid in enumerate(uids):
             rows.append([
                 f"{uid}",
+                f"{hotkeys[idx]}",
                 f"{workload_counts[idx]}",
                 f"{", ".join(quality_scores[idx])}",
                 f"{workload_score[idx]}",
                 f"{new_ema_scores[uid][0]}"
             ])
         miners_response_output = table_formatter.create_multiple_column_table(
-            title=f"{header} - Miners Final Scores",
+            title=f"{header} - Miners Final Score",
             columns=[
                 "UID",
+                "Hotkey",
                 "Workload Count",
                 "Workload Quality",
                 "Workload Score",
