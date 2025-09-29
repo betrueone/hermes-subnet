@@ -33,6 +33,6 @@ class Timer:
             rows = [self.response]
             if self.error:
                 rows.append(f"⚠️ Error: {self.error}")
-            output_lines.append(table_formatter.create_single_column_multiple_row_table("💬 Answer", rows))
+            output_lines.append(table_formatter.create_single_column_table("💬 Answer", rows))
         self.log and self.log.info("\n".join(output_lines))
         self.log and self.log.info(f"""⏱️ cost: {self.final_time:.4f}s""")

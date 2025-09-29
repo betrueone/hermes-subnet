@@ -9,7 +9,7 @@ import traceback
 from loguru import logger
 from typing import TYPE_CHECKING
 import torch
-
+import common.utils as utils
 from common.protocol import OrganicNonStreamSynapse
 if TYPE_CHECKING:
     from hermes.validator.challenge_manager import ChallengeManager
@@ -141,7 +141,7 @@ class WorkloadManager:
         uids: list[int],
         hotkeys: list[str],
         challenge_id: str = ""
-    ) -> list[float]:
+    ) -> tuple[list[float], list[int], list[list[float]]]:
         await self.purge(uids, hotkeys)
 
         workload_counts = []
@@ -179,10 +179,10 @@ class WorkloadManager:
             else:
                 normalized_workload = (quantity - min_workload) / (max_workload - min_workload)
 
-            scores[idx] = min(0.5 * quality_ema + 0.5 * normalized_workload, 5)
+            scores[idx] = utils.fix_float(min(0.5 * quality_ema + 0.5 * normalized_workload, 5))
 
         logger.info(f"[WorkloadManager] - {challenge_id} workload_counts: {workload_counts}, quality_scores: {log_quality_scores}, compute_workload_score: {scores}")
-        return scores
+        return scores, workload_counts, log_quality_scores
 
     async def compute_organic_task(self):
         debug = os.getenv("DEBUG_ORGANIC_COUNTER", "0") == "1"

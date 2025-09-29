@@ -36,7 +36,7 @@ class Settings:
     
     @property
     def metagraph(self) -> Metagraph:
-        if int(time.time()) - self._last_update_time > 1200:
+        if int(time.time()) - self._last_update_time > 60 * 10:
             try:
                 logger.info(f"Fetching new METAGRAPH for NETUID={self.netuid}")
                 meta = self.subtensor.metagraph(netuid=self.netuid)

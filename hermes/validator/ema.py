@@ -1,4 +1,5 @@
 from loguru import logger
+import common.utils as utils
 
 class EMAUpdater:
     def __init__(self, alpha=0.5):
@@ -34,7 +35,7 @@ class EMAUpdater:
                 last_val = cur_val
 
             # calculate EMA
-            new_scores[uid] = ((1 - self.alpha) * last_val + self.alpha * cur_val, cur_hk)
+            new_scores[uid] = (utils.fix_float((1 - self.alpha) * last_val + self.alpha * cur_val), cur_hk)
 
         self._last_scores = new_scores
 

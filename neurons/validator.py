@@ -27,6 +27,8 @@ from loguru import logger
 import bittensor as bt
 import uvicorn
 from multiprocessing.synchronize import Event
+from common.table_formatter import table_formatter
+from common.errors import ErrorCode
 from common.logger import HermesLogger
 from common.protocol import CapacitySynapse, ChatCompletionRequest, OrganicNonStreamSynapse, OrganicStreamSynapse
 import common.utils as utils
@@ -159,22 +161,26 @@ class Validator(BaseNeuron):
             await asyncio.sleep(30)
 
     async def forward_miner(self, cid: str, body: ChatCompletionRequest):
+        synapse = OrganicNonStreamSynapse(id=body.id, project_id=cid, completion=body)
         try:
             available_miners = []
             for uid, info in self.miners_dict.items():
                 projects = info.get("projects", [])
                 if cid in projects:
                     available_miners.append(uid)
+
             if len(available_miners) == 0:
-                logger.warning(f"No available miners found for project {cid}. Falling back to any miner.")
-                return
+                logger.error(f"[Organic] - {body.id} No available miners found for project {cid}.")
+                synapse.status_code = ErrorCode.ORGANIC_NO_AVAILABLE_MINERS.value
+                synapse.error = "No available miners"
+                return synapse
 
             synthetic_score: dict[int, tuple[float, str]] = self.synthetic_score[0] if self.synthetic_score else {}
             miner_uid, _ = utils.select_uid(synthetic_score, available_miners, self.uid_select_count)
             if not miner_uid:
-                logger.error(f"[Validator] No miner selected for project {cid}.")
-                synapse = OrganicNonStreamSynapse(id=body.id, project_id=cid, completion=body)
-                synapse.response = {"error": "No miner available"}
+                logger.error(f"[Organic] - {body.id} No miner selected for project {cid}.")
+                synapse.status_code = ErrorCode.ORGANIC_NO_SELECTED_MINER.value
+                synapse.error = "No selected miner"
                 return synapse
 
             if body.stream:
@@ -192,14 +198,14 @@ class Validator(BaseNeuron):
                         yield part
                 return StreamingResponse(streamer(), media_type="text/plain")
 
-            synapse = OrganicNonStreamSynapse(id=body.id, project_id=cid, completion=body)
             axons = self.settings.metagraph.axons[miner_uid]
             if not axons:
-                logger.error(f"[Validator] organic task({body.id}) No axons found for miner_uid: {miner_uid}")
-                synapse.response = {"error": "No axons found"}
+                logger.error(f"[Organic] - {body.id} No axons found for miner_uid: {miner_uid}")
+                synapse.status_code = ErrorCode.ORGANIC_NO_AXON.value
+                synapse.error = "No axon found"
                 return synapse
 
-            logger.info(f"[Validator] Received organic task({body.id}) cid: {cid}, body: {body}, forward to miner_uid: {miner_uid}({axons.hotkey})")
+            logger.info(f"[Organic] - {body.id} Received organic cid: {cid}, body: {body}, forward to miner_uid: {miner_uid}({axons.hotkey})")
 
             start_time = time.perf_counter()
             response = await self.dendrite.forward(
@@ -208,23 +214,27 @@ class Validator(BaseNeuron):
                 deserialize=True,
                 timeout=self.forward_miner_timeout,
             )
-            elapsed_time = time.perf_counter() - start_time
+            elapsed_time = utils.fix_float(time.perf_counter() - start_time)
             response.elapsed_time = elapsed_time
 
-            logger.info(f"[Validator] organic task({body.id}), miner response: {response}")
-
-            # logger.info(f'----{response.dendrite.status_code}')
-            # logger.info(f'----{response.dendrite.status_message}')
             if len(self.organic_score_queue) < 1000:
-                logger.debug(f"[Validator] organic_score_queue size: {len(self.organic_score_queue)}, is_success: {response.is_success}")
-                if response.is_success:
+                logger.debug(f"[Organic] - {body.id} organic_score_queue size: {len(self.organic_score_queue)}, is_success: {response.is_success}")
+                if response.is_success and response.status_code == ErrorCode.SUCCESS.value:
                     self.organic_score_queue.append((miner_uid, axons.hotkey, response.dict()))
+            
+            table_formatter.create_organic_challenge_table(
+                id=body.id,
+                cid=cid,
+                question=synapse.get_question(),
+                response=response,
+            )
+            # logger.info(f"[Organic] - {body.id} organic task({body.id}), miner response: {response}")
             return response
         
         except Exception as e:
-            logger.error(f"[Validator] forward_miner error: {e} {traceback.format_exc()}")
-            synapse = OrganicNonStreamSynapse(id=body.id, project_id=cid, completion=body)
-            synapse.response = {"error": str(e)}
+            logger.error(f"[Validator] forward_miner error: {e}\n{traceback.format_exc()}")
+            synapse.status_code = ErrorCode.ORGANIC_ERROR_RESPONSE.value
+            synapse.error = str(e)
             return synapse
 
 def run_challenge(organic_score_queue: list, synthetic_score: list, event_stop: Event):

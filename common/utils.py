@@ -9,7 +9,6 @@ from langchain.schema import BaseMessage
 from langchain.schema import AIMessage
 
 
-
 def try_get_external_ip() -> str | None:
     try:
         external_ip = requests.get("https://checkip.amazonaws.com").text.strip()
@@ -171,6 +170,8 @@ def try_get_tool_hit(messages: list[BaseMessage], exclude_tools=[]) -> list[tupl
     tool_hit = [(name, tool_counts[name]) for name in tool_order]
     return tool_hit
 
+def fix_float(elapsed: float) -> float:
+    return int(elapsed * 100) / 100
 
 def kill_process_group():
     try:

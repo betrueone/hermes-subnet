@@ -10,39 +10,6 @@ from agent.stats import Metrics
 from common.sqlite_manager import SQLiteManager
 
 
-class StatsMiddleware(BaseHTTPMiddleware):
-    def __init__(self, app, sqlite_manager: SQLiteManager, metrics: Metrics):
-        super().__init__(app)
-        self.sqlite_manager = sqlite_manager
-        self.metrics = metrics
-
-    def handle_stats_html(self):
-        with open(f"common/stats.html", "r", encoding="utf-8") as f:
-            html = f.read()
-        return fastapi.Response(content=html, media_type="text/html")
-
-    def handle_stats_data(self, since_id: int = 0):
-        if since_id > 0:
-            data = self.sqlite_manager.fetch_newer_than(since_id)
-        else:
-            data = self.sqlite_manager.fetch_all()
-
-        return fastapi.Response(content=json.dumps({"data": data, "usage": self.metrics.stats()}), media_type="application/json")
-
-    async def dispatch(
-        self, request: "fastapi.Request", call_next: "RequestResponseEndpoint"
-    ) -> fastapi.Response:
-        path = request.url.path
-        if path == '/favicon.ico':
-            return fastapi.Response(status_code=404)
-        elif path == '/stats':
-            return self.handle_stats_html()
-        elif path == '/stats/data':
-            return self.handle_stats_data(int(request.query_params.get("since_id", 0)))
-
-        return await call_next(request)
-
-
 # ===============  openai ================
 class ChatCompletionMessage(BaseModel):
     role: str = Field(..., description="Message role: system, user, or assistant")
@@ -55,7 +22,6 @@ class ChatCompletionRequest(BaseModel):
     stream: bool = Field(default=False, description="Whether to stream responses")
     temperature: float = Field(default=0.0, description="Sampling temperature")
     max_tokens: Optional[int] = Field(default=None, description="Maximum tokens to generate")
-
 
 class CapacitySynapse(bt.Synapse):
     time_elapsed: int = 0
@@ -140,3 +106,46 @@ class OrganicNonStreamSynapse(BaseSynapse):
         user_messages = [msg for msg in self.completion.messages if msg.role == "user"]
         user_input = user_messages[-1].content
         return user_input
+
+class StatsMiddleware(BaseHTTPMiddleware):
+    def __init__(self, app, sqlite_manager: SQLiteManager, metrics: Metrics):
+        super().__init__(app)
+        self.sqlite_manager = sqlite_manager
+        self.metrics = metrics
+        self.allowed_path = [
+            '/stats',
+            '/stats/data',
+            '/CapacitySynapse',
+            '/SyntheticNonStreamSynapse',
+            '/OrganicNonStreamSynapse',
+            '/OrganicStreamSynapse'
+        ]
+
+    def handle_stats_html(self):
+        with open(f"common/stats.html", "r", encoding="utf-8") as f:
+            html = f.read()
+        return fastapi.Response(content=html, media_type="text/html")
+
+    def handle_stats_data(self, since_id: int = 0):
+        if since_id > 0:
+            data = self.sqlite_manager.fetch_newer_than(since_id)
+        else:
+            data = self.sqlite_manager.fetch_all()
+
+        return fastapi.Response(content=json.dumps({"data": data, "usage": self.metrics.stats()}), media_type="application/json")
+
+    async def dispatch(
+        self, request: "fastapi.Request", call_next: "RequestResponseEndpoint"
+    ) -> fastapi.Response:
+        path = request.url.path
+        if path not in self.allowed_path:
+            return fastapi.Response(status_code=404)
+
+        if path == '/stats':
+            return self.handle_stats_html()
+        elif path == '/stats/data':
+            return self.handle_stats_data(int(request.query_params.get("since_id", 0)))
+        return await call_next(request)
+
+
+

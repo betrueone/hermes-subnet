@@ -2,6 +2,8 @@ from rich.console import Console
 from rich.box import ROUNDED
 from rich.table import Table
 from loguru import logger
+from common.errors import ErrorCode
+from common.protocol import OrganicNonStreamSynapse
 
 
 class TableFormatter:
@@ -10,22 +12,41 @@ class TableFormatter:
     def __init__(self):
         self.console = Console()
     
-    def create_single_column_table(self, header: str, content: str, header_style: str = "bold") -> str:
+    def create_single_column_table(self, header: str, rows: list[str], header_style: str = "bold", caption: str = "") -> str:
         """Create a single column table with header and content"""
-        table = Table(show_header=True, header_style=header_style)
+        table = Table(show_header=True, header_style=header_style, caption=caption, caption_justify="left", box=ROUNDED)
         table.add_column(header, style="white")
-        table.add_row(content)
-        
+        for row in rows:
+            table.add_row(row)
+
         with self.console.capture() as capture:
             self.console.print(table)
         return capture.get().strip()
     
-    def create_single_column_multiple_row_table(self, header: str, rows: list[str], header_style: str = "bold") -> str:
-        """Create a single column table with header and content"""
-        table = Table(show_header=True, header_style=header_style, box=ROUNDED)
-        table.add_column(header, style="white")
+    def create_multiple_column_table(
+            self,
+            columns: list[str],
+            rows: list[str],
+            header_style: str = "bold",
+            title: str = "",
+            caption: str = "",
+        ) -> str:
+        """Create a multiple column table with headers and content"""
+        table = Table(
+            title=title,
+            title_style="bold",
+            title_justify="left",
+            caption=caption,
+            caption_justify="left",
+            show_header=True,
+            header_style=header_style,
+            box=ROUNDED
+        )
+        for col in columns:
+            table.add_column(col, style="white")
         for row in rows:
-            table.add_row(row)
+            table.add_row(*row)
+
         with self.console.capture() as capture:
             self.console.print(table)
         return capture.get().strip()
@@ -66,10 +87,6 @@ class TableFormatter:
         
         return "\n".join(output_lines)
     
-    def create_synthetic_challenge_table(self, question: str, challenge_id: str = "") -> str:
-        """Create table for synthetic challenge display"""
-        return self.create_single_column_table("🤖 Synthetic Challenge" + f" ({challenge_id})", question, "bold green")
-
     def create_ground_truth_tables(self, ground_truth: str, generation_cost: float, challenge_id: str = "") -> str:
         """Create tables for ground truth display"""
         output_lines = []
@@ -82,6 +99,142 @@ class TableFormatter:
         
         return "\n".join(output_lines)
     
+    def create_synthetic_challenge_table(
+        self,
+        round_id: str,
+        challenge_id: str,
+        cid: str,
+        question: str,
+        success: bool,
+        ground_truth: str,
+        ground_cost: float
+    ):
+        header = "🤖 Synthetic Challenge" + f" ({round_id} | {challenge_id})"
+        rows = [
+            f"❓ Question: {question}\n",
+            f"🎯 Ground Truth: {None if not success else ground_truth}\n",
+            f"⚠️ {ground_truth}\n" if not success else "",
+            f"⏱️ Cost: {ground_cost}s"
+        ]
+        challenge_output = self.create_single_column_table(
+            header=header,
+            rows=rows,
+            header_style="bold green",
+            caption=f"cid: {cid}"
+        )
+        self.log_with_newline(challenge_output, "info")
+
+    def create_synthetic_miners_response_table(
+        self,
+        round_id: str,
+        challenge_id: str,
+        uids: list[int],
+        responses: list[any],
+        ground_truth_scores: list[float],
+        elapse_weights: list[float],
+        zip_scores: list[float],
+        cid: str,
+    ):
+        header = "🤖 Synthetic Challenge" + f" ({round_id} | {challenge_id})"
+        rows = []
+        for idx, uid in enumerate(uids):
+            r = responses[idx]
+            rstr = None
+            if r.is_success:
+                if r.status_code == ErrorCode.SUCCESS.value:
+                    rstr = f"{r.response}"
+                else:
+                    rstr = f"⚠️ {r.status_code}: {r.error}"
+            else:
+                rstr = f"⚠️ {r.dendrite.status_code}"
+                    
+            uid_hotkey = f"{uid}|{r.dendrite.hotkey}" if getattr(r.dendrite, 'hotkey', None) else f"{uid}"
+            rows.append([
+                uid_hotkey,
+                f"{rstr}",
+                f"{r.elapsed_time}s",
+                f"{ground_truth_scores[idx]}",
+                f"{elapse_weights[idx]}",
+                f"{zip_scores[idx]}",
+            ])
+        miners_response_output = self.create_multiple_column_table(
+            title=f"{header} - Miners Response",
+            caption=f"cid: {cid}",
+            columns=[
+                "UID",
+                "Response",
+                "Elapsed Time",
+                "Truth Score",
+                "Elapse Weight",
+                "Score"
+            ],
+            rows=rows
+        )
+        self.log_with_newline(miners_response_output, "info")
+
+    def create_synthetic_final_ranking_table(
+        self,
+        round_id: str,
+        challenge_id: str,
+        uids: list[int],
+        workload_counts: list[int],
+        quality_scores: list[list[float]],
+        workload_score: list[float],
+        new_ema_scores: dict[int, tuple[float, str]]
+    ):
+        header = "🤖 Synthetic Challenge" + f" ({round_id} | {challenge_id})"
+        rows = []
+        for idx, uid in enumerate(uids):
+            rows.append([
+                f"{uid}",
+                f"{workload_counts[idx]}",
+                f"{", ".join(quality_scores[idx])}",
+                f"{workload_score[idx]}",
+                f"{new_ema_scores[uid][0]}"
+            ])
+        miners_response_output = table_formatter.create_multiple_column_table(
+            title=f"{header} - Miners Final Scores",
+            columns=[
+                "UID",
+                "Workload Count",
+                "Workload Quality",
+                "Workload Score",
+                "Final EMA Score"
+            ],
+            rows=rows
+        )
+        table_formatter.log_with_newline(miners_response_output, "info")
+
+    def create_organic_challenge_table(
+        self,
+        id: str,
+        cid: str,
+        question: str,
+        response: OrganicNonStreamSynapse
+    ):
+        header = "🌿 Organic" + f" {id})"
+        rstr = None
+        if response.is_success:
+            if response.status_code == ErrorCode.SUCCESS.value:
+                rstr = f"💬 Answer: {response.response.get('messages')[-1].content}"
+            else:
+                rstr = f"⚠️ {response.status_code}: {response.error}"
+        else:
+            rstr = f"⚠️ {response.dendrite.status_code}"
+            
+        rows = [
+            f"❓ Question: {question}\n",
+            f"{rstr}\n",
+            f"⏱️ Cost: {response.elapsed_time}s"
+        ]
+        challenge_output = self.create_single_column_table(
+            header=header,
+            rows=rows,
+            header_style="bold green",
+            caption=f"cid: {cid}"
+        )
+        self.log_with_newline(challenge_output, "info")
+
     def log_with_newline(self, content: str, level: str = "info", **kwargs):
         """Log content with newline prefix, avoiding format string issues"""
         log_func = getattr(logger.opt(raw=True), level)

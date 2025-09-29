@@ -21,4 +21,12 @@ class ErrorCode(Enum):
     
     TOOL_ERROR = 1001
 
+    ## ============ miner side error ============
     AGENT_NOT_FOUND = 2001
+
+    ## ============ validator side error ============
+    FORWARD_SYNTHETIC_FAILED = 3001
+    ORGANIC_NO_AVAILABLE_MINERS = 3002
+    ORGANIC_NO_SELECTED_MINER = 3003
+    ORGANIC_NO_AXON = 3004
+    ORGANIC_ERROR_RESPONSE = 3005

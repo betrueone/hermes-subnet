@@ -201,7 +201,7 @@ class Miner(BaseNeuron):
             error = str(e)
             status_code = ErrorCode.INTERNAL_SERVER_ERROR
 
-        elapsed = time.perf_counter() - before
+        elapsed = utils.fix_float(time.perf_counter() - before)
         
         tool_hit_names = [t[0] for t in tool_hit]
         rows = [f"💬 Answer: {answer}\n"]
@@ -209,10 +209,10 @@ class Miner(BaseNeuron):
             rows.append(f"⚠️ {status_code.value} | {error}\n")
         if len(tool_hit_names) > 0:
             rows.append(f"🛠️ Tools Hit: {', '.join(tool_hit_names)}\n")
-        rows.append(f"⏱️ Cost: {elapsed:.4f}s")
+        rows.append(f"⏱️ Cost: {elapsed}s")
         
         status_icon = "✅" if status_code == ErrorCode.SUCCESS else "❌"
-        output = table_formatter.create_single_column_multiple_row_table(
+        output = table_formatter.create_single_column_table(
             f"🤖 {status_icon} {tag}: {question} ({task.id})",
             rows,
         )
@@ -270,7 +270,7 @@ class Miner(BaseNeuron):
         return task
         
     async def forward_capacity(self, synapse: CapacitySynapse) -> CapacitySynapse:
-        logger.info(f"[Miner] Received capacity request")
+        logger.debug(f"[Miner] Received capacity request")
         if not self.agent_manager:
             logger.warning(f"[Miner] No agent manager found")
             synapse.response = {
