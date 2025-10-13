@@ -171,3 +171,6 @@ testing/
 
 projects/
 .data/
+
+# Analysis documentation
+.doc/

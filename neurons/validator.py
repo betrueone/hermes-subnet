@@ -201,7 +201,7 @@ class Validator(BaseNeuron):
                         yield f"{formatted_chunk}"
                     
                     yield f"{utils.format_openai_message('', finish_reason='stop')}"
-                    yield f"data: [DONE]]\n\n"
+                    yield f"data: [DONE]\n\n"
 
                 return StreamingResponse(
                     streamer(), 
