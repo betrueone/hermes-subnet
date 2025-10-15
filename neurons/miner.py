@@ -52,7 +52,10 @@ class Miner(BaseNeuron):
 
     def __init__(self, config_loguru: bool = True):
         if config_loguru:
-            HermesLogger.configure_loguru(file=f"{LOGGER_DIR}/{self.role}.log")
+            HermesLogger.configure_loguru(
+                file=f"{LOGGER_DIR}/{self.role}.log",
+                error_file=f"{LOGGER_DIR}/{self.role}_error.log"
+            )
         super().__init__()
 
     async def start(self):
