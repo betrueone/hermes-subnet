@@ -167,17 +167,17 @@ class Validator(BaseNeuron):
 
             await asyncio.sleep(30)
 
-    async def forward_miner(self, cid: str, body: ChatCompletionRequest):
-        synapse = OrganicNonStreamSynapse(id=body.id, project_id=cid, completion=body)
+    async def forward_miner(self, cid_hash: str, body: ChatCompletionRequest):
+        synapse = OrganicNonStreamSynapse(id=body.id, cid_hash=cid_hash, completion=body)
         try:
             available_miners = []
             for uid, info in self.miners_dict.items():
                 projects = info.get("projects", [])
-                if cid in projects:
+                if cid_hash in projects:
                     available_miners.append(uid)
 
             if len(available_miners) == 0:
-                logger.error(f"[Organic] - {body.id} No available miners found for project {cid}.")
+                logger.error(f"[Organic] - {body.id} No available miners found for project {cid_hash}.")
                 synapse.status_code = ErrorCode.ORGANIC_NO_AVAILABLE_MINERS.value
                 synapse.error = "No available miners"
                 return synapse
@@ -185,7 +185,7 @@ class Validator(BaseNeuron):
             synthetic_score: dict[int, tuple[float, str]] = self.synthetic_score[0] if self.synthetic_score else {}
             miner_uid, _ = utils.select_uid(synthetic_score, available_miners, self.uid_select_count)
             if not miner_uid:
-                logger.error(f"[Organic] - {body.id} No miner selected for project {cid}.")
+                logger.error(f"[Organic] - {body.id} No miner selected for project {cid_hash}.")
                 synapse.status_code = ErrorCode.ORGANIC_NO_SELECTED_MINER.value
                 synapse.error = "No selected miner"
                 return synapse
@@ -194,7 +194,7 @@ class Validator(BaseNeuron):
             dd: bt.Dendrite = self.dendrite
             if body.stream:
                 async def streamer():
-                    synapse = OrganicStreamSynapse(project_id=cid, completion=body)
+                    synapse = OrganicStreamSynapse(cid_hash=cid_hash, completion=body)
                     responses = await dd.forward(
                         axons=self.settings.metagraph.axons[miner_uid],
                         synapse=synapse,
@@ -222,7 +222,7 @@ class Validator(BaseNeuron):
                 synapse.error = "No axon found"
                 return synapse
 
-            logger.info(f"[Organic] - {body.id} Received organic cid: {cid}, body: {body}, forward to miner_uid: {miner_uid}({axons.hotkey})")
+            logger.info(f"[Organic] - {body.id} Received organic request for project: {cid_hash}, body: {body}, forward to miner_uid: {miner_uid}({axons.hotkey})")
 
             start_time = time.perf_counter()
             response = await self.dendrite.forward(
@@ -241,7 +241,7 @@ class Validator(BaseNeuron):
             
             table_formatter.create_organic_challenge_table(
                 id=body.id,
-                cid=cid,
+                cid=cid_hash,
                 question=synapse.get_question(),
                 response=response,
             )

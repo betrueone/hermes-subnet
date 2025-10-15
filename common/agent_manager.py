@@ -58,8 +58,8 @@ class AgentManager:
         
 
     def _init_agents(self):
-        for cid, project_config in self.get_projects().items():
-            self.graphql_agent[cid] =  GraphQLAgent(project_config)
+        for cid_hash, project_config in self.get_projects().items():
+            self.graphql_agent[cid_hash] =  GraphQLAgent(project_config)
         logger.info(f"[AgentManager] Initialized graphql_agents for projects: {list(self.graphql_agent.keys())}")
 
     def _init_miner_agents(self):
@@ -88,12 +88,12 @@ class AgentManager:
             if not project_dir.is_dir():
                 continue
             
-            cid = project_dir.name
-            if cid == "__pycache__":
+            cid_hash = project_dir.name
+            if cid_hash == "__pycache__":
                 continue
 
-            project = self.miner_agent.get(cid)
-            prev_tools = self.miner_agent.get(cid, {}).get('tools', {})
+            project = self.miner_agent.get(cid_hash)
+            prev_tools = self.miner_agent.get(cid_hash, {}).get('tools', {})
             current_tools = {}
             
             relative_module_parts = project_dir.relative_to(Path(__file__).parent.parent / "projects").parts
@@ -159,9 +159,9 @@ class AgentManager:
                     # model="openai:" + model,
                     model=self.llm_synthetic,
                     tools=tools,
-                    prompt= f"You are the agent for project {cid}."
+                    prompt= f"You are the agent for project {cid_hash}."
                 )
-                logger.info(f"[AgentManager] load agent, Project {cid} using model {self.llm_synthetic.model_name} - tools: {[t.name for t in tools]}, Created: {[t.name for t in created]}, Updated: {[t.name for t in updated]}, Deleted: {deleted}, with prompt: {suc}")
+                logger.info(f"[AgentManager] load agent, Project {cid_hash} using model {self.llm_synthetic.model_name} - tools: {[t.name for t in tools]}, Created: {[t.name for t in created]}, Updated: {[t.name for t in updated]}, Deleted: {deleted}, with prompt: {suc}")
 
                 async def fallback_graphql_agent(state: MessagesState):
                     # logger.info(f"====================== Entering fallback_graphql_agent ====================== {state["messages"]}")
@@ -201,7 +201,7 @@ class AgentManager:
                 builder.add_edge(START, "miner_agent")
                 multi_agent_graph = builder.compile()
 
-                self.miner_agent[cid] = {
+                self.miner_agent[cid_hash] = {
                     "tools": {t.name: getattr(type(t), "__version__", "0.0.0") for t in tools},
                     "miner_agent": miner_agent,
                     "graphql_agent": graphql_agent,
@@ -209,19 +209,19 @@ class AgentManager:
                     "counter": ToolCountHandler()
                 }
             else:
-                logger.info(f"[AgentManager] Project {cid} - No changes in tools.")
+                logger.info(f"[AgentManager] Project {cid_hash} - No changes in tools.")
 
         return self.miner_agent
 
     def get_projects(self):
         return self.project_manager.get_projects()
 
-    def get_graphql_agent(self, cid) -> GraphQLAgent:
-        return self.graphql_agent[cid]
-    
-    def get_miner_agent(self, cid: str | None = None) -> dict | tuple[StateGraph, StateGraph, GraphQLAgent]:
-        if cid:
-            config = self.miner_agent.get(cid, {})
+    def get_graphql_agent(self, cid_hash: str) -> GraphQLAgent:
+        return self.graphql_agent[cid_hash]
+
+    def get_miner_agent(self, cid_hash: str | None = None) -> dict | tuple[StateGraph, StateGraph, GraphQLAgent]:
+        if cid_hash:
+            config = self.miner_agent.get(cid_hash, {})
             return (
                 config.get('agent_graph', None),
                 config.get('miner_agent', None),

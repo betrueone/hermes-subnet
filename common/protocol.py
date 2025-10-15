@@ -56,8 +56,7 @@ class SyntheticStreamSynapse(bt.StreamingSynapse):
 
 class BaseSynapse(bt.Synapse):
     id: str | None = None
-    project_id: str | None = None
-    cid: str | None = None
+    cid_hash: str | None = None
     status_code: int | None = 200
     error: str | None = None
     elapsed_time: float | None = 0.0
@@ -71,7 +70,7 @@ class SyntheticNonStreamSynapse(BaseSynapse):
 
 class OrganicStreamSynapse(bt.StreamingSynapse):
     time_elapsed: int = 0
-    project_id: str | None = None
+    cid_hash: str | None = None
     completion: ChatCompletionRequest | None = None
     response: Optional[dict] = None
 

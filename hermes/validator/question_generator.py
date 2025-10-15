@@ -32,13 +32,13 @@ class QuestionGenerator:
         formatted += "\nGenerate a COMPLETELY DIFFERENT question with different metrics, addresses, or eras."
         return formatted
 
-    async def generate_question(self, project_cid: str, entity_schema: str, llm: ChatOpenAI) -> str:
+    async def generate_question(self, cid_hash: str, entity_schema: str, llm: ChatOpenAI) -> str:
         if not entity_schema:
             return ""
-        if project_cid not in self.project_question_history:
-            self.project_question_history[project_cid] = deque(maxlen=self.max_history)
+        if cid_hash not in self.project_question_history:
+            self.project_question_history[cid_hash] = deque(maxlen=self.max_history)
         
-        recent_questions = self.format_history_constraint(self.project_question_history[project_cid])
+        recent_questions = self.format_history_constraint(self.project_question_history[cid_hash])
         
         # Use environment variable to choose prompt template
         demo_mode = os.getenv("DEMO_MODE", "false").lower() == "true"
@@ -51,10 +51,10 @@ class QuestionGenerator:
             response = await llm.ainvoke([HumanMessage(content=prompt)])
             question = response.content.strip()
         except Exception as e:
-            logger.error(f"Error generating question for project {project_cid}: {e}")
+            logger.error(f"Error generating question for project {cid_hash}: {e}")
             return ""
-        
-        self.add_to_history(project_cid, question)
+
+        self.add_to_history(cid_hash, question)
         return question
 
     async def generate_question_with_agent(self, project_cid: str, entity_schema: str, server_agent: GraphQLAgent) -> str:
@@ -83,15 +83,15 @@ class QuestionGenerator:
                 return True
         
         return False
-    def add_to_history(self, project_cid, question: str):
-        if project_cid not in self.project_question_history:
-            self.project_question_history[project_cid] = deque(maxlen=self.max_history)
+    def add_to_history(self, cid_hash, question: str):
+        if cid_hash not in self.project_question_history:
+            self.project_question_history[cid_hash] = deque(maxlen=self.max_history)
 
-        self.project_question_history[project_cid].append(question)
+        self.project_question_history[cid_hash].append(question)
 
-    def clear_history(self, project_cid: str):
-        if project_cid in self.project_question_history:
-            self.project_question_history[project_cid].clear()
+    def clear_history(self, cid_hash: str):
+        if cid_hash in self.project_question_history:
+            self.project_question_history[cid_hash].clear()
 
 
 question_generator = QuestionGenerator(max_history=5)

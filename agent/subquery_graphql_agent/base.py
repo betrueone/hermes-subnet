@@ -171,6 +171,7 @@ class ProjectConfig:
     """Configuration for a SubQuery or The Graph project."""
     cid: str
     endpoint: str
+    cid_hash: Optional[str] = None
     schema_content: str
     node_type: str = GraphqlProvider.UNKNOWN
     manifest: Dict[str, Any] = None

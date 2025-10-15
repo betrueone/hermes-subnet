@@ -2412,5 +2412,6 @@
     "How many ServiceAgreements started or expired in the last 24 hours, and which deployments are most used by agreements or StateChannels?",
     "Can you provide a sample GraphQL query to fetch EraReward records and EraIndexerApy for a specific indexer and era?"
   ],
-  "authorization": null
+  "authorization": null,
+  "cid_hash": "QmfUNJC1Qz8m3F67sQmxrwjuSAu4WaCR1iBdPPdzBruQ7P_e4ae3190"
 }

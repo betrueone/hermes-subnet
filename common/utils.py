@@ -6,6 +6,7 @@ import httpx
 from loguru import logger
 import netaddr
 import requests
+import hashlib
 from langchain.schema import BaseMessage
 from langchain.schema import AIMessage
 
@@ -240,6 +241,9 @@ def safe_float_convert(s: str) -> float:
     except Exception as e:
         return 0.0
 
+def hash256(data: str) -> str:
+    return hashlib.sha256(data.encode()).hexdigest()
+            
 def kill_process_group():
     try:
         os.killpg(os.getpgid(0), signal.SIGKILL)

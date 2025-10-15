@@ -2420,5 +2420,6 @@
     "How many active state channels are currently running?",
     "What are the most popular project deployments by consumer spending?"
   ],
-  "authorization": null
+  "authorization": null,
+  "cid_hash": "QmfUNJC1Qz8m3F67sQmxrwjuSAu4WaCR1iBdPPdzBruQ7P_e4ae3190"
 }

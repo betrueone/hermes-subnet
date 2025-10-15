@@ -48,12 +48,12 @@ async def verify_signature(request: Request):
         logger.error(f"[API] Error verifying signature: {e} {traceback.format_exc()}")
         raise HTTPException(status_code=400, detail="Error verifying signature")
 
-@router.post("/{cid}/chat/completions")
+@router.post("/{cid_hash}/chat/completions")
 async def chat(
-    cid: str, request: Request, body: ChatCompletionRequest, _: dict = Depends(verify_signature)
+    cid_hash: str, request: Request, body: ChatCompletionRequest, _: dict = Depends(verify_signature)
 ):
     v: "Validator" = request.app.state.validator
-    return await v.forward_miner(cid, body)
+    return await v.forward_miner(cid_hash, body)
 
 
 @app.get("/health")

@@ -157,7 +157,7 @@ class ChallengeManager:
 
                 project_score_matrix = []
 
-                for cid, project_config in projects.items():
+                for cid_hash, project_config in projects.items():
                     # Retry loop: attempt to generate a valid challenge for this project
                     max_retries = int(os.getenv("CHALLENGE_GENERATION_MAX_RETRIES", 3))
                     challenge_generated = False
@@ -166,13 +166,13 @@ class ChallengeManager:
                         challenge_id = str(uuid4())
 
                         # generate challenge
-                        question = await question_generator.generate_question(cid, project_config.schema_content, self.llm_synthetic)
+                        question = await question_generator.generate_question(cid_hash, project_config.schema_content, self.llm_synthetic)
                         if not question:
-                            logger.warning(f"[ChallengeManager] - {cid} Failed to generate question (attempt {attempt + 1}/{max_retries})")
+                            logger.warning(f"[ChallengeManager] - {cid_hash} Failed to generate question (attempt {attempt + 1}/{max_retries})")
                             continue
 
                         # generate ground truth
-                        success, ground_truth, ground_cost = await self.generate_ground_truth(cid, question)
+                        success, ground_truth, ground_cost = await self.generate_ground_truth(cid_hash, question)
 
                         # Validate ground truth content
                         is_valid = success and utils.is_ground_truth_valid(ground_truth)
@@ -181,7 +181,7 @@ class ChallengeManager:
                         table_formatter.create_synthetic_challenge_table(
                             round_id=self.round_id,
                             challenge_id=challenge_id,
-                            cid=cid,
+                            cid=cid_hash,
                             question=question,
                             success=is_valid,
                             ground_truth=ground_truth,
@@ -198,7 +198,7 @@ class ChallengeManager:
 
                     # Skip this project if all retries failed
                     if not challenge_generated:
-                        logger.error(f"[ChallengeManager] - {cid} Failed to generate valid challenge after {max_retries} attempts, skipping project")
+                        logger.error(f"[ChallengeManager] - {cid_hash} Failed to generate valid challenge after {max_retries} attempts, skipping project")
                         continue
 
                     # query all miner
@@ -206,7 +206,7 @@ class ChallengeManager:
                     responses = await asyncio.gather(
                         *(self.query_miner(
                             uid=uid,
-                            cid=cid,
+                            cid_hash=cid_hash,
                             challenge_id=challenge_id,
                             question=question
                         ) for uid in uids)
@@ -229,7 +229,7 @@ class ChallengeManager:
                         ground_truth_scores=ground_truth_scores,
                         elapse_weights=elapse_weights,
                         zip_scores=zip_scores,
-                        cid=cid
+                        cid=cid_hash
                     )
 
                 if not project_score_matrix:
@@ -265,14 +265,14 @@ class ChallengeManager:
             logger.error(f"[ChallengeManager] Challenge loop error: {e}\n{traceback.format_exc()}")
             raise
 
-    async def generate_ground_truth(self, cid: str, question: str) -> Tuple[bool, str | None, int]:
+    async def generate_ground_truth(self, cid_hash: str, question: str) -> Tuple[bool, str | None, int]:
         start_time = time.perf_counter()
         success = False
         result = None
         try:
-            agent = self.agent_manager.get_graphql_agent(cid)
+            agent = self.agent_manager.get_graphql_agent(cid_hash)
             if not agent:
-                raise ValueError(f"No server agent found for cid: {cid}")
+                raise ValueError(f"No server agent found for cid: {cid_hash}")
 
             response = await agent.query_no_stream(question, is_synthetic=True)
             result = response.get('messages', [])[-1].content
@@ -280,20 +280,20 @@ class ChallengeManager:
             if not result:
                 error = utils.try_get_invalid_tool_messages(response.get('messages', []))
                 if error:
-                    raise RuntimeError(f"[ChallengeManager] - {cid} Failed to generate ground truth. {error}")
+                    raise RuntimeError(f"[ChallengeManager] - {cid_hash} Failed to generate ground truth. {error}")
 
             success = True
 
         except KeyboardInterrupt:
-            logger.info(f"[ChallengeManager] generate_ground_truth interrupted by user for cid: {cid}")
+            logger.info(f"[ChallengeManager] generate_ground_truth interrupted by user for cid: {cid_hash}")
             raise  # Re-raise to allow graceful shutdown
         except Exception as e:
             # Handle specific rate limit errors differently
             if isinstance(e, (dict, str)) and ('429' in str(e) or 'RATE_LIMIT_EXCEEDED' in str(e)):
-                logger.warning(f"[ChallengeManager] Rate limit exceeded for cid: {cid}. Will retry later. Error: {e}")
+                logger.warning(f"[ChallengeManager] Rate limit exceeded for cid: {cid_hash}. Will retry later. Error: {e}")
                 raise  # Re-raise rate limit errors to allow retry logic
             else:
-                logger.error(f"[ChallengeManager] generate_ground_truth error for cid: {cid} {e}\n{traceback.format_exc()}")
+                logger.error(f"[ChallengeManager] generate_ground_truth error for cid: {cid_hash} {e}\n{traceback.format_exc()}")
                 raise
 
         finally:
@@ -302,15 +302,15 @@ class ChallengeManager:
     async def query_miner(
         self,
         uid: int,
-        cid: str,
+        cid_hash: str,
         challenge_id: str,
         question: str,
     ):
-        synapse = SyntheticNonStreamSynapse(id=challenge_id, project_id=cid, question=question)
+        synapse = SyntheticNonStreamSynapse(id=challenge_id, cid_hash=cid_hash, question=question)
         start_time = time.perf_counter()
 
         # Initialize response object with error defaults
-        r = SyntheticNonStreamSynapse(id=challenge_id, project_id=cid, question=question)
+        r = SyntheticNonStreamSynapse(id=challenge_id, cid_hash=cid_hash, question=question)
         r.status_code = ErrorCode.FORWARD_SYNTHETIC_FAILED.value
         r.error = "Unknown error"
 

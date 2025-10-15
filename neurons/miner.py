@@ -188,8 +188,8 @@ class Miner(BaseNeuron):
             type = 1
             is_synthetic = False
 
-        project_id = task.project_id
-        agent_graph, _, graphql_agent = self.agent_manager.get_miner_agent(project_id)
+        cid_hash = task.cid_hash
+        agent_graph, _, graphql_agent = self.agent_manager.get_miner_agent(cid_hash)
 
         tool_hit = []
         answer = None
@@ -202,8 +202,8 @@ class Miner(BaseNeuron):
 
         try:
             if not agent_graph:
-                log.warning(f"[{tag}] - {task.id} No agent found for project {project_id}")
-                error = f"No agent found for project {project_id}"
+                log.warning(f"[{tag}] - {task.id} No agent found for project {cid_hash}")
+                error = f"No agent found for project {cid_hash}"
                 status_code = ErrorCode.AGENT_NOT_FOUND
             else:
                 r = await agent_graph.ainvoke(
@@ -245,6 +245,7 @@ class Miner(BaseNeuron):
         output = table_formatter.create_single_column_table(
             f"🤖 {status_icon} {tag}: {question} ({task.id})",
             rows,
+            caption=cid_hash
         )
         log.info(f"\n{output}")
 
@@ -255,8 +256,8 @@ class Miner(BaseNeuron):
             "type": type,
             "source": task.dendrite.hotkey,
             "task_id": task.id,
-            "project_id": task.project_id,
-            "cid": task.project_id,
+            "project_id": task.cid_hash,
+            "cid": task.cid_hash,
             "request_data": question,
             "response_data": answer if status_code == ErrorCode.SUCCESS else task.error,
             "status_code": task.status_code,
@@ -278,7 +279,7 @@ class Miner(BaseNeuron):
         user_messages = [msg for msg in synapse.completion.messages if msg.role == "user"]
         user_input = user_messages[-1].content
 
-        agent_graph, _, graphql_agent = self.agent_manager.get_miner_agent(synapse.project_id)
+        agent_graph, _, graphql_agent = self.agent_manager.get_miner_agent(synapse.cid_hash)
 
 
         async def token_streamer(send: Send):
@@ -371,11 +372,11 @@ class Miner(BaseNeuron):
             }
             return synapse
 
-        cids = self.agent_manager.get_miner_agent().keys()
+        cid_hashs = self.agent_manager.get_miner_agent().keys()
         synapse.response = {
             "role": "miner",
             "capacity": {
-                "projects": list(cids)
+                "projects": list(cid_hashs)
             }
         }
         return synapse

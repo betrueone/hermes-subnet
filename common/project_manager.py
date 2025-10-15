@@ -1,4 +1,5 @@
 from dataclasses import asdict, dataclass
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -10,7 +11,7 @@ from langchain_openai import ChatOpenAI
 from loguru import logger
 from pydantic import BaseModel
 import yaml
-from common.utils import fetch_from_ipfs
+import common.utils as utils
 
 
 class Metadata(BaseModel):
@@ -60,6 +61,7 @@ class ProjectConfig:
     decline_message: str = "I'm specialized in this project's data queries. I can help you with the indexed blockchain data, but I cannot assist with [their topic]. Please ask me about this project's data instead."
     suggested_questions: List[str] = None
     authorization: Optional[str] = None
+    cid_hash: Optional[str] = None
     
     def __post_init__(self):
         if self.manifest is None:
@@ -111,13 +113,22 @@ class ProjectManager:
             async with session.post(f"{board_url}/project/list", headers=headers, json=data) as resp:
                 response_data = await resp.json()
         parsed = ProjectListResponse(**response_data)
-        self.projects.update({project.metadata.cid: project for project in parsed.data.data})
 
-        for cid, project in self.projects.items():
-            if ALLOWED_CID and cid not in ALLOWED_CID:
-                logger.warning(f"[ProjectManager] Project {cid} is not in the allowed list.")
+        for project in parsed.data.data:
+            cid = project.metadata.cid
+            endpoint = f"{project.metadata.endpoint.rstrip('/')}/"
+            combined = f"{cid}{endpoint}"
+            hash_value = utils.hash256(combined)[:8]
+            key = f"{cid}_{hash_value}"
+            self.projects.update({key: project})
+
+        # self.projects.update({project.metadata.cid: project for project in parsed.data.data})
+
+        for cid_hash, project in self.projects.items():
+            if ALLOWED_CID and project.metadata.cid not in ALLOWED_CID:
+                logger.warning(f"[ProjectManager] Project {project.metadata.cid} is not in the allowed list.")
                 continue
-            await self.register_project(cid, project.metadata.endpoint)
+            await self.register_project(cid_hash, project.metadata.endpoint)
         return parsed
     
     def load(self):
@@ -125,17 +136,17 @@ class ProjectManager:
         for project_dir in self.target_dir.iterdir():
             if not project_dir.is_dir():
                 continue
-            cid = project_dir.name
-            if cid == "__pycache__":
+            cid_hash = project_dir.name
+            if cid_hash == "__pycache__":
                 continue
             config_file = project_dir / "config.json"
             if not config_file.exists():
                 continue
             with open(config_file) as f:
                 config = json.load(f)
-            projects[cid] = ProjectConfig(**config)
+            projects[cid_hash] = ProjectConfig(**config)
 
-        self.projects_config.update({cid: config for cid, config in projects.items()})
+        self.projects_config.update({cid_hash: config for cid_hash, config in projects.items()})
         return self.projects_config
 
     def get_project(self, cid: str) -> ProjectConfig:
@@ -147,7 +158,7 @@ class ProjectManager:
     async def pull_manifest(self, cid: str) -> Dict:
         try:
             logger.info(f"[ProjectManager] Fetching manifest for CID: {cid}")
-            manifest_content = await fetch_from_ipfs(cid)
+            manifest_content = await utils.fetch_from_ipfs(cid)
             try:
                 manifest = yaml.safe_load(manifest_content)
             except yaml.YAMLError:
@@ -168,10 +179,10 @@ class ProjectManager:
                         # Extract CID from The Graph format: /ipfs/QmXXX
                         schema_cid = schema_path.replace('/ipfs/', '')
                         logger.debug(f"[ProjectManager] Fetching The Graph schema from IPFS CID: {schema_cid}")
-                        schema_content = await fetch_from_ipfs(schema_cid)
+                        schema_content = await utils.fetch_from_ipfs(schema_cid)
                     else:
                         logger.debug(f"[ProjectManager] Fetching schema file: {schema_path}")
-                        schema_content = await fetch_from_ipfs(cid, schema_path)
+                        schema_content = await utils.fetch_from_ipfs(cid, schema_path)
                 else:
                     # SubQL format: schema: { file: "schema.graphql" }
                     schema_path = schema_info.get('file', 'schema.graphql')
@@ -184,32 +195,33 @@ class ProjectManager:
                     elif schema_path.startswith('ipfs://'):
                         schema_cid = schema_path.replace('ipfs://', '')
                         logger.debug(f"[ProjectManager] Fetching SubQL schema from IPFS CID: {schema_cid}")
-                        schema_content = await fetch_from_ipfs(schema_cid)
+                        schema_content = await utils.fetch_from_ipfs(schema_cid)
                     else:
                         logger.debug(f"[ProjectManager] Fetching schema file: {schema_path}")
-                        schema_content = await fetch_from_ipfs(cid, schema_path)
+                        schema_content = await utils.fetch_from_ipfs(cid, schema_path)
             else:
                 # Fallback for simple string format
                 schema_path = str(schema_info) if schema_info else 'schema.graphql'
                 logger.debug(f"[ProjectManager] Fetching schema file: {schema_path}")
-                schema_content = await fetch_from_ipfs(cid, schema_path)
+                schema_content = await utils.fetch_from_ipfs(cid, schema_path)
 
             return schema_content
         except Exception as e:
             raise RuntimeError(f"[ProjectManager] Failed to pull schema: {str(e)}")
 
 
-    async def register_project(self, cid: str, endpoint: str) -> ProjectConfig:
+    async def register_project(self, cid_hash: str, endpoint: str) -> ProjectConfig:
         try:
             # Check if project already exists locally
-            existing_config = self._load_existing_project(cid)
+            existing_config = self._load_existing_project(cid_hash)
             if existing_config:
-                logger.info(f"[ProjectManager] Loading existing project: {existing_config.domain_name} ({cid})")
-                self.projects_config[cid] = existing_config
+                logger.info(f"[ProjectManager] Loading existing project: {existing_config.domain_name} ({cid_hash})")
+                self.projects_config[cid_hash] = existing_config
                 return existing_config
 
             # Project doesn't exist locally, need to analyze with LLM
-            logger.info(f"[ProjectManager] Analyzing new project: {cid}")
+            logger.info(f"[ProjectManager] Analyzing new project: {cid_hash} at {endpoint}")
+            cid = cid_hash.split('_')[0]
             manifest = await self.pull_manifest(cid)
             schema_content = await self.pull_schema(cid, manifest)
 
@@ -218,6 +230,7 @@ class ProjectManager:
             config = ProjectConfig(
                 cid=cid,
                 endpoint=endpoint,
+                cid_hash=cid_hash,
                 schema_content=schema_content,
                 manifest=manifest,
                 domain_name=llm_analysis["domain_name"],
@@ -228,11 +241,11 @@ class ProjectManager:
             # Save to disk and memory
             self._save_project(config)
 
-            self.projects_config[cid] = config
-            logger.info(f"[ProjectManager] Registered new project: {llm_analysis['domain_name']} ({cid})")
+            self.projects_config[cid_hash] = config
+            logger.info(f"[ProjectManager] Registered new project: {llm_analysis['domain_name']} ({cid_hash}) with endpoint {endpoint}")
             return config
         except Exception as e:
-            raise RuntimeError(f"[ProjectManager] Failed to register project {cid}: {str(e)}")
+            raise RuntimeError(f"[ProjectManager] Failed to register project {cid_hash} with endpoint {endpoint}: {str(e)}")
 
 
     async def analyze_project_with_llm(self, manifest: dict, schema_content: str, llm=None) -> dict:
@@ -399,12 +412,12 @@ Make each capability very specific to the entities found in the schema."""
             }
 
     
-    def _load_existing_project(self, cid: str) -> ProjectConfig | None:
+    def _load_existing_project(self, cid_hash: str) -> ProjectConfig | None:
         """Load existing project configuration from local disk if it exists."""
         if self.target_dir is None:
             return None
 
-        config_file = self.target_dir / cid / "config.json"
+        config_file = self.target_dir / cid_hash / "config.json"
         if not config_file.exists():
             return None
 
@@ -416,18 +429,18 @@ Make each capability very specific to the entities found in the schema."""
             required_fields = ['cid', 'endpoint', 'schema_content', 'domain_name', 'domain_capabilities']
             for field in required_fields:
                 if field not in config_data:
-                    logger.warning(f"[ProjectManager] Existing project {cid} missing required field: {field}")
+                    logger.warning(f"[ProjectManager] Existing project {cid_hash} missing required field: {field}")
                     return None
 
             return ProjectConfig(**config_data)
         except Exception as e:
-            logger.error(f"[ProjectManager] Failed to load existing project {cid}: {e}")
+            logger.error(f"[ProjectManager] Failed to load existing project {cid_hash}: {e}")
             return None
 
     def _save_project(self, config: ProjectConfig):
         # current_dir = Path(__file__).parent
         # PROJECTS_DIR = current_dir.parent / "projects"
-        dir = self.target_dir / config.cid
+        dir = self.target_dir / config.cid_hash
         dir.mkdir(parents=True, exist_ok=True)
 
         file = dir / "config.json"
