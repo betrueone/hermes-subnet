@@ -19,6 +19,7 @@ import asyncio
 from collections import defaultdict
 import os
 from pathlib import Path
+import random
 import traceback
 import torch.multiprocessing as mp
 import time
@@ -27,6 +28,7 @@ from loguru import logger
 import bittensor as bt
 import uvicorn
 from multiprocessing.synchronize import Event
+from common.meta_config import MetaConfig
 from common.table_formatter import table_formatter
 from common.errors import ErrorCode
 from common.logger import HermesLogger
@@ -60,7 +62,15 @@ class Validator(BaseNeuron):
         self.forward_miner_timeout = int(os.getenv("FORWARD_MINER_TIMEOUT", 60 * 3))  # seconds
         logger.info(f"Set forward miner timeout to {self.forward_miner_timeout} seconds")
 
-    async def run_challenge(self, organic_score_queue: list, synthetic_score: list, miners_dict: dict, synthetic_token_usage: list, event_stop: Event):
+    async def run_challenge(
+            self,
+            organic_score_queue: list,
+            synthetic_score: list,
+            miners_dict: dict,
+            synthetic_token_usage: list,
+            meta_config: dict,
+            event_stop: Event,
+    ):
         self.challenge_manager = ChallengeManager(
             settings=self.settings,
             save_project_dir=Path(__file__).parent.parent / "projects" / self.role,
@@ -70,6 +80,7 @@ class Validator(BaseNeuron):
             synthetic_score=synthetic_score,
             miners_dict=miners_dict,
             synthetic_token_usage=synthetic_token_usage,
+            meta_config=meta_config,
             event_stop=event_stop,
             v=self,
         )
@@ -261,7 +272,14 @@ class Validator(BaseNeuron):
             synapse.error = str(e)
             return synapse
 
-def run_challenge(organic_score_queue: list, synthetic_score: list, miners_dict: dict, synthetic_token_usage: list, event_stop: Event):
+def run_challenge(
+        organic_score_queue: list,
+        synthetic_score: list,
+        miners_dict: dict,
+        synthetic_token_usage: list,
+        meta_config: dict,
+        event_stop: Event
+):
     proc = mp.current_process()
     HermesLogger.configure_loguru(
         file=f"{LOGGER_DIR}/{proc.name}.log",
@@ -269,9 +287,22 @@ def run_challenge(organic_score_queue: list, synthetic_score: list, miners_dict:
     )
 
     logger.info(f"run_challenge process id: {os.getpid()}")
-    asyncio.run(Validator().run_challenge(organic_score_queue, synthetic_score, miners_dict, synthetic_token_usage, event_stop))
+    asyncio.run(Validator().run_challenge(
+        organic_score_queue,
+        synthetic_score,
+        miners_dict,
+        synthetic_token_usage,
+        meta_config,
+        event_stop
+    ))
 
-def run_api(organic_score_queue: list, miners_dict: dict, synthetic_score: list, synthetic_token_usage: list):
+def run_api(
+        organic_score_queue: list,
+        miners_dict: dict,
+        synthetic_score: list,
+        synthetic_token_usage: list,
+        meta_config: dict
+    ):
     proc = mp.current_process()
     HermesLogger.configure_loguru(
         file=f"{LOGGER_DIR}/{proc.name}.log",
@@ -298,13 +329,21 @@ async def main():
             miners_dict = manager.dict({})
             synthetic_score = manager.list([{}])
             synthetic_token_usage = manager.list([])
+            meta_config = manager.dict({})
 
             processes: list[mp.Process] = []
             event_stop = mp.Event()
         
             challenge_process = mp.Process(
                 target=run_challenge,
-                args=(organic_score_queue, synthetic_score, miners_dict, synthetic_token_usage, event_stop),
+                args=(
+                    organic_score_queue,
+                    synthetic_score,
+                    miners_dict,
+                    synthetic_token_usage,
+                    meta_config,
+                    event_stop
+                ),
                 name="ChallengeProcess",
                 daemon=True,
             )
@@ -313,7 +352,13 @@ async def main():
 
             api_process = mp.Process(
                 target=run_api,
-                args=(organic_score_queue, miners_dict, synthetic_score, synthetic_token_usage),
+                args=(
+                    organic_score_queue,
+                    miners_dict,
+                    synthetic_score,
+                    synthetic_token_usage,
+                    meta_config
+                ),
                 name="APIProcess",
                 daemon=True,
             )
@@ -329,9 +374,23 @@ async def main():
             miner_checking_process.start()
             processes.append(miner_checking_process)
 
+            meta = MetaConfig()
             logger.info(f"main process id: {os.getpid()}")
             while True:
-                await asyncio.sleep(10)
+                try:
+                    new_meta = await meta.pull()
+                    if new_meta.data:
+                        new_min_latency_improvement_ratio = new_meta.data.get("min_latency_improvement_ratio", 0.2)
+
+                        if new_min_latency_improvement_ratio != meta_config.get("min_latency_improvement_ratio", 0.2):
+                            meta_config.update({
+                                "min_latency_improvement_ratio": new_min_latency_improvement_ratio
+                            })
+                            logger.info(f"Updating min_latency_improvement_ratio from {meta_config.get('min_latency_improvement_ratio', 0.2)} to {new_min_latency_improvement_ratio}")
+                    
+                except Exception as e:
+                    logger.error(f"Failed to refresh meta config: {e}")
+                await asyncio.sleep(5 * 60 + random.randint(0, 30))
 
         except KeyboardInterrupt:
             event_stop.set()

@@ -1,6 +1,6 @@
 import json
 import bittensor as bt
-from typing import Optional, List
+from typing import Any, Optional, List
 import fastapi
 from pydantic import BaseModel, Field
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
@@ -192,10 +192,16 @@ class StatsMiddleware(BaseHTTPMiddleware):
         elif path == '/stats/token_stats':
             return self.handle_token_stats(request.query_params.get("latest", "2h"))
         return await call_next(request)
-
 class ExtendedMessagesState(MessagesState):
     graphql_agent_hit: bool
     intermediate_graphql_agent_input_token_usage: int
     intermediate_graphql_agent_input_cache_read_token_usage: int
     intermediate_graphql_agent_output_token_usage: int
 
+
+class BaseBoardResponse(BaseModel):
+    code: int
+    message: str
+
+class MetaConfigResponse(BaseBoardResponse):
+    data: dict[str, Any]

@@ -22,10 +22,29 @@ def try_get_external_ip() -> str | None:
         logger.warning(f"Failed to get external ip: {e}")
         return None
     
-def get_elapse_weight_quadratic(elapsed_time: float, ground_truth_cost: float) -> float:
+def get_elapse_weight_quadratic(elapsed_time: float, ground_truth_cost: float, min_latency_improvement_ratio: float) -> float:
+    """
+    Calculate weight based on elapsed time vs ground truth cost.
+    
+    Args:
+        elapsed_time: Miner's response time
+        ground_truth_cost: Ground truth generation time
+        min_latency_improvement_ratio: Minimum improvement ratio required (e.g., 0.2 means miner must be 20% faster)
+        
+    Returns:
+        float: Weight score between 0.0 and 1.0
+    """
     if elapsed_time <= 0:
         return 1.0
     if ground_truth_cost <= 0:
+        return 0.0
+
+    # Check if miner meets minimum latency improvement requirement
+    # e.g., if min_latency_improvement_ratio = 0.2, miner must be at least 20% faster
+    # This means elapsed_time must be <= ground_truth_cost * (1 - 0.2) = ground_truth_cost * 0.8
+    max_allowed_time = ground_truth_cost * (1.0 - min_latency_improvement_ratio)
+    
+    if elapsed_time > max_allowed_time:
         return 0.0
 
     time_ratio = elapsed_time / ground_truth_cost
@@ -365,6 +384,9 @@ def calculate_token_cost(
         "zai-org/glm-4.6": {"input": 0.60, "output": 2.20, "input_cache": 0.0},
         "gpt-5-mini": {"input": 0.25, "output": 2.00, "input_cache": 0.025},
         "gpt-5": {"input": 1.25, "output": 10, "input_cache": 0.125},
+
+        # for fine tuning
+        "gpt-4.1-mini": {"input": 0.80, "output": 3.20, "input_cache": 0.20},
     }
     
     # Get pricing for the model, fallback to default if not found
@@ -453,15 +475,15 @@ def kill_process_group():
 
 if __name__ == "__main__":
     ground_truth_cost = 15.0
-    print(get_elapse_weight_quadratic(1, ground_truth_cost))
-    print(get_elapse_weight_quadratic(2, ground_truth_cost))
-    print(get_elapse_weight_quadratic(4, ground_truth_cost))
-    print(get_elapse_weight_quadratic(8, ground_truth_cost))
-    print(get_elapse_weight_quadratic(11, ground_truth_cost))
-    print(get_elapse_weight_quadratic(14, ground_truth_cost))
-    print(get_elapse_weight_quadratic(20, ground_truth_cost))
-    print(get_elapse_weight_quadratic(24, ground_truth_cost))
-    print(get_elapse_weight_quadratic(30, ground_truth_cost))
+    print(get_elapse_weight_quadratic(1, ground_truth_cost, 0.2))
+    print(get_elapse_weight_quadratic(2, ground_truth_cost, 0.2))
+    print(get_elapse_weight_quadratic(4, ground_truth_cost, 0.2))
+    print(get_elapse_weight_quadratic(8, ground_truth_cost, 0.2))
+    print(get_elapse_weight_quadratic(11, ground_truth_cost, 0.2))
+    print(get_elapse_weight_quadratic(14, ground_truth_cost, 0.2))
+    print(get_elapse_weight_quadratic(20, ground_truth_cost, 0.2))
+    print(get_elapse_weight_quadratic(24, ground_truth_cost, 0.2))
+    print(get_elapse_weight_quadratic(30, ground_truth_cost, 0.2))
 
     # total_cost_info = calculate_token_cost(
     #     input_tokens=72999,
@@ -498,10 +520,10 @@ if __name__ == "__main__":
     # logger.info(f"Cost Breakdown - Input: ${total_cost_info['input_cost']:.6f}, Cache: ${total_cost_info['cache_cost']:.6f}, Output: ${total_cost_info['output_cost']:.6f}")
 
     total_cost_info = calculate_token_cost(
-        input_tokens=60025,
-        output_tokens=338,
-        input_cache_tokens=20152,
-        model_name='zai-org/glm-4.6'
+        input_tokens=2000,
+        output_tokens=2000,
+        input_cache_tokens=0,
+        model_name='gpt-4.1-mini'
     )
     logger.info(f"Total Token: {total_cost_info['total_tokens']}")
     logger.info(f"Total Cost: ${total_cost_info['total_cost']:.6f}")

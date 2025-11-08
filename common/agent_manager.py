@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Literal
 import pkgutil
 import sys
+import os
 from loguru import logger
 from pydantic import BaseModel
 from langchain_openai import ChatOpenAI
@@ -75,7 +76,9 @@ class AgentManager:
             logger.info(f"[AgentManager] Initialized graphql_agents for projects: {new_agents}")
 
     def _init_miner_agents(self):
-        
+        enable_fallback = os.getenv("ENABLE_FALL_BACK_GRAPHQL_AGENT", "false").lower() == "true"
+        logger.info(f"[AgentManager] ENABLE_FALL_BACK_GRAPHQL_AGENT: {enable_fallback}")
+
         base_path = Path(self.save_project_dir)
         for project_dir in base_path.iterdir():
             if not project_dir.is_dir():
@@ -121,6 +124,7 @@ class AgentManager:
                 miner_tools.append(_tool)
 
                 deleted = [name for name in prev_tools.keys() if name not in current_tools]
+            
             if (not project) or (created or updated or deleted):
                 config_path = project_dir / 'config.json'
 
@@ -149,38 +153,43 @@ class AgentManager:
                     """
                     pass
 
-                async def call_graphql_agent(state: ExtendedMessagesState) -> dict:
-                    messages = state["messages"]
-                    human_messages = [m for m in messages if m.type == 'human']
-                    # logger.info(f" call_graphql_agent - messages: {messages} ")
-                    logger.info(f" call_graphql_agent - human_messages: {human_messages} ")
-                    if not human_messages:
-                        return {"messages": [AIMessage(content="")]}
+                def make_call_graphql_agent(agent: GraphQLAgent):
+                    async def call_graphql_agent(state: ExtendedMessagesState) -> dict:
+                        messages = state["messages"]
+                        human_messages = [m for m in messages if m.type == 'human']
 
-                    # user_input = messages[-1].content if len(messages) > 0 else ""
-                    response = await graphql_agent.executor.ainvoke(
-                        {"messages": human_messages},
-                        config={
-                            "recursion_limit": 12,
-                        }
-                    )
+                        enable_log = os.getenv("ENABLE_LOG_GRAPHQL_AGENT", "false").lower() == "true"
+                        if enable_log:
+                            logger.info(f" call_graphql_agent - human_messages: {human_messages} ")
+                        if not human_messages:
+                            return {"messages": [AIMessage(content="")]}
 
-                    logger.info(f" --------call_graphql_agent------ response: {response} ")
-                    last = response['messages'][-1]
-                    input_token_usage, input_cache_read_token_usage, output_token_usage = utils.extract_token_usage(response['messages'][0: -1])
+                        # user_input = messages[-1].content if len(messages) > 0 else ""
+                        response = await agent.executor.ainvoke(
+                            {"messages": human_messages},
+                            config={
+                                "recursion_limit": 12,
+                            }
+                        )
+                        if enable_log:
+                            logger.info(f" --------call_graphql_agent------ response: {response} ")
+                        
+                        last = response['messages'][-1]
+                        input_token_usage, input_cache_read_token_usage, output_token_usage = utils.extract_token_usage(response['messages'][0: -1])
 
-                    if not last.content:
-                        error_msg = utils.try_get_invalid_tool_messages(last)
-                        if error_msg:
-                            last.content = error_msg
+                        if not last.content:
+                            error_msg = utils.try_get_invalid_tool_messages(last)
+                            if error_msg:
+                                last.content = error_msg
 
-                    return {
-                            "messages": [last], 
-                            "intermediate_graphql_agent_input_token_usage": input_token_usage,
-                            "intermediate_graphql_agent_input_cache_read_token_usage": input_cache_read_token_usage,
-                            "intermediate_graphql_agent_output_token_usage": output_token_usage,
-                            "graphql_agent_hit": True
-                        }
+                        return {
+                                "messages": [last], 
+                                "intermediate_graphql_agent_input_token_usage": input_token_usage,
+                                "intermediate_graphql_agent_input_cache_read_token_usage": input_cache_read_token_usage,
+                                "intermediate_graphql_agent_output_token_usage": output_token_usage,
+                                "graphql_agent_hit": True
+                            }
+                    return call_graphql_agent
 
                 def tool_condition(
                     state: Union[list[AnyMessage], dict[str, Any], BaseModel],
@@ -204,7 +213,10 @@ class AgentManager:
                     return END
 
                 # logger.info(f"[AgentManager] Project {cid_hash} - Detected changes in tools. Created: {[utils.get_func_name(t) for t in created]}, Updated: {[utils.get_func_name(t) for t in updated]}, Deleted: {deleted}")
-                llm_with_tools = self.llm_synthetic.bind_tools(miner_tools + [graphql_agent_tool])
+                
+                call_graphql_agent = make_call_graphql_agent(graphql_agent)
+                
+                llm_with_tools = self.llm_synthetic.bind_tools(miner_tools + [graphql_agent_tool] if enable_fallback else [])
 
                 async def call_model(state: MessagesState) -> int:
                     """
@@ -214,7 +226,7 @@ class AgentManager:
                     # logger.info(f" call_model - messages: {messages} ")
                     response_messages = await llm_with_tools.ainvoke(messages)
 
-                    # logger.info(f" call_model - response: {response_messages} ")
+                    logger.info(f" call_model - response: {response_messages} ")
                     return {"messages": [response_messages]}
 
                 builder = StateGraph(ExtendedMessagesState)

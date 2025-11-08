@@ -38,6 +38,7 @@ class ChallengeManager:
     workload_manager: WorkloadManager
     synthetic_score: list
     miners_dict: dict
+    meta_config: dict
     event_stop: Event
     scores: torch.Tensor
     token_usage_metrics: TokenUsageMetrics
@@ -53,6 +54,7 @@ class ChallengeManager:
         miners_dict: dict,
         synthetic_model_name: str | None = None,
         score_model_name: str | None = None,
+        meta_config: dict = None,
         event_stop: Event = None,
         synthetic_token_usage: list = None,
         v: "Validator" = None,
@@ -102,6 +104,7 @@ class ChallengeManager:
 
         self.synthetic_score = synthetic_score
         self.miners_dict = miners_dict
+        self.meta_config = meta_config
         self.event_stop = event_stop
 
         self._last_set_weight_time = 0
@@ -254,6 +257,7 @@ class ChallengeManager:
                         challenge_id=challenge_id,
                         cid_hash=cid_hash,
                         token_usage_metrics=self.token_usage_metrics,
+                        min_latency_improvement_ratio=self.meta_config.get("min_latency_improvement_ratio", 0.2),
                         round_id=self.round_id
                     )
                     project_score_matrix.append(zip_scores)

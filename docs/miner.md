@@ -127,6 +127,11 @@ MINER_LLM_MODEL=gpt-4o-mini
 
 # For GraphQL agent & synthetic challenges
 LLM_MODEL=gpt-5
+
+# disable GraphQL agent
+ENABLE_FALL_BACK_GRAPHQL_AGENT=false
+
+
 ```
 
 Configuration Parameters:
@@ -146,6 +151,8 @@ Configuration Parameters:
 * `LLM_MODEL`: LLM model used by the `Subql GraphQL Agent`. This model serves as a fallback when the miner agent cannot handle a query, ensuring that synthetic challenges and GraphQL-based requests are processed..
 
 * `MINER_LLM_MODEL`: LLM model used by the miner to analyze projects and serve query requests. Generally, the more powerful the model, the higher its factual accuracy.
+
+* `ENABLE_FALL_BACK_GRAPHQL_AGENT`: When none of the tools are matched, the request will be redirected to the `Subql GraphQL Agent`. Default is `False`.
 
 <br />
 
