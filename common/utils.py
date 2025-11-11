@@ -3,6 +3,7 @@ import os
 import signal
 import time
 import httpx
+import aiohttp
 from loguru import logger
 import netaddr
 import requests
@@ -465,6 +466,78 @@ def omit(obj: dict, keys: list) -> dict:
         return {}
     
     return {key: value for key, value in obj.items() if key not in keys}
+
+async def getLatestBlock(endpoint: str, node_type: str) -> int | None:
+    """
+    Get the latest block height from a GraphQL endpoint.
+    
+    Args:
+        endpoint: The GraphQL endpoint URL
+        node_type: Type of node - "subql" or "thegraph"
+        
+    Returns:
+        int: Latest block height, or None if failed
+        
+    Examples:
+        For SubQuery: returns lastProcessedHeight from _metadata
+        For The Graph: returns block number from _meta
+    """
+    try:
+        # Construct GraphQL query based on node type
+        if node_type == "subql":
+            query = """
+            query {
+              _metadata {
+                lastProcessedHeight
+              }
+            }
+            """
+        elif node_type == "thegraph":
+            query = """
+            {
+              _meta {
+                block {
+                  number
+                }
+              }
+            }
+            """
+        else:
+            logger.error(f"Unknown node_type: {node_type}")
+            return None
+        
+        # Send GraphQL request using aiohttp
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                endpoint,
+                json={"query": query},
+                headers={"Content-Type": "application/json"},
+                timeout = aiohttp.ClientTimeout(total=30.0)
+            ) as response:
+                if response.status != 200:
+                    logger.error(f"Failed to get latest block from {endpoint}: HTTP {response.status}")
+                    return None
+                
+                data = await response.json()
+                
+                # Extract block height based on node type
+                if node_type == "subql":
+                    block_height = data.get("data", {}).get("_metadata", {}).get("lastProcessedHeight")
+                elif node_type == "thegraph":
+                    block_height = data.get("data", {}).get("_meta", {}).get("block", {}).get("number")
+                else:
+                    return None
+                
+                if block_height is not None:
+                    logger.info(f"Latest block height from {endpoint} ({node_type}): {block_height}")
+                    return int(block_height)
+                else:
+                    logger.error(f"Failed to extract block height from response: {data}")
+                    return None
+                
+    except Exception as e:
+        logger.error(f"Error getting latest block from {endpoint}: {e}")
+        return None
 
 def kill_process_group():
     try:

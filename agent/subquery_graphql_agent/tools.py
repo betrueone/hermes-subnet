@@ -228,7 +228,8 @@ def create_system_prompt(
     domain_name: str,
     domain_capabilities: list,
     decline_message: str,
-    is_synthetic: bool = False
+    is_synthetic: bool = False,
+    block_height: int = 0
 ) -> str:
     """
     Create a system prompt for langgraph GraphQL agent.
@@ -583,6 +584,35 @@ If looking for recent indexers by commission era:
 - If you used orderBy: DESC, the FIRST result is the highest/maximum
 - first: 5 is enough for most questions - don't re-query with first: 50
 - Use what you already have!
+
+🚨 CRITICAL BLOCK HEIGHT RULE:
+- CURRENT BLOCK HEIGHT: ##{block_height}##
+- IF CURRENT BLOCK HEIGHT is NOT 0 (non-zero value):
+  * ALL GraphQL queries MUST include the blockHeight parameter
+  * Set blockHeight to the CURRENT BLOCK HEIGHT value
+  * This ensures queries return data at the specified block state
+  
+  ✅ CORRECT (when CURRENT BLOCK HEIGHT = 5460865):
+  {{
+    indexers(first: 5, blockHeight: "5460865") {{ nodes {{ id totalStake }} }}
+  }}
+  
+  {{
+    indexer(id: "0x123", blockHeight: "5460865") {{ id totalStake }}
+  }}
+  
+  {{
+    deployments(first: 5, orderBy: AMOUNT_DESC, blockHeight: "5460865") {{ nodes {{ id amount }} }}
+  }}
+  
+  ❌ WRONG (missing blockHeight when CURRENT BLOCK HEIGHT is non-zero):
+  {{
+    indexers(first: 5) {{ nodes {{ id totalStake }} }}
+  }}
+  
+- IF CURRENT BLOCK HEIGHT is 0:
+  * Do NOT add blockHeight parameter to queries
+  * Query normally without blockHeight
 
 For missing user info (like "my rewards", "my tokens"), always ask for the specific wallet address or ID rather than fabricating data."""
     else:

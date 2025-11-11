@@ -40,7 +40,49 @@ Your task:
 Output: [Question only, no explanations]
 """
 
-synthetic_challenge_template_V5 = """
+
+synthetic_challenge_template_V5 = """You are a question generator base on given graphql schema.
+
+Graphql Schema:
+{entity_schema}
+
+Task: Generate ONE natural question about numerical data from the schema above.
+
+Definitions:
+- "Numerical value" means a single count, sum, average, percentage, or other numeric metric.
+- Each question must involve exactly ONE metric.
+- If the output would be a list, show only the first 3 results.
+- If the output would be a list with superlative comparisons (highest, largest, most, best, etc.), do not always use the same phrasing. 
+  Instead, randomly choose:
+  (1) Ask for the top 3 results. 
+  (2) Ask only for the single highest/largest result. 
+  Vary the wording naturally so the questions do not all look alike.
+
+CRITICAL CONSTRAINT - MUST AVOID REPETITION:
+{recent_questions}
+
+Your task:
+1. Ask about a specific numerical value, metric, or calculation.
+2. Carefully read and understand the schema, including types, queries, mutations, and relationships.
+3. Each question must focus on a single data point or calculation
+5. Ask for ONLY ONE metric or value - do not use "and" or "or" to combine multiple questions.
+6. Do not include explanations, answers, or more than one question.
+7. Ask about what CAN be queried, not specific made-up scenarios.
+8. NEVER fabricate wallet addresses, entity IDs, or any specific data values.
+9. ABSOLUTELY DO NOT generate questions that are similar to the ones listed above in CRITICAL CONSTRAINT section.
+10. IMPORTANT: Do not ask questions that require additional user input or context to be answerable. Avoid questions with unclear references like "my agreement", "my rewards", or "my tokens" without specifying which specific entity is being referenced.
+11. Verify that the question can be answered by examining the available fields, types, and relationships in the schema before generating it.
+12. Do NOT ask hypothetical questions (like "What would happen if...", "How might...", "What could...", "For a specified ..."). Only ask direct factual questions about actual data.
+13. Do NOT ask question which has placeholders in the question.
+14. CRITICAL: Ask business-oriented questions that real users would ask, DO NOT mention any specific data structures or entity names. Real users don't know about backend schema details. Instead, ask about business concepts.
+15. TIME RANGE CONSTRAINT: When generating questions about time-based data, you MUST first use the graphql_query_validator_execute tool to query actual time ranges from the system (e.g., query for available eras, block heights). DO NOT use vague time ranges like "last 10 days" or "recently". DO NOT fabricate specific values. After querying, include the actual values in your question. For example: first query to find latest era ID is "0x50", then generate question "What is the total stake in era 0x50?".
+16. ENTITY ID/ADDRESS CONSTRAINT: When generating questions about specific entities, you MUST first use the graphql_query_validator_execute tool to query actual entity IDs or addresses from the system (e.g., query for indexers, delegators, wallets). DO NOT fabricate IDs or addresses. After querying, select one real entity and include it in your question. For example: first query to find an indexer address "0xABC...", then generate question "What is the current stake of wallet 0xABC...?". Questions must contain real, queried values, not made-up data.
+
+
+Output: [Question only, no explanations]
+"""
+
+synthetic_challenge_template_simple = """
 You are a question generator based on a given GraphQL schema.
 
 GraphQL Schema:
@@ -102,9 +144,14 @@ SYNTHETIC_PROMPT = PromptTemplate(
     template=synthetic_challenge_template_V4
 )
 
+SYNTHETIC_PROMPT_V5 = PromptTemplate(
+    input_variables=["entity_schema", "recent_questions", "max_block_height"],
+    template=synthetic_challenge_template_V5
+)
+
 SYNTHETIC_PROMPT_SIMPLE = PromptTemplate(
     input_variables=["entity_schema", "recent_questions"],
-    template=synthetic_challenge_template_V5
+    template=synthetic_challenge_template_simple
 )
 
 
@@ -202,13 +249,79 @@ SCORE_PROMPT = PromptTemplate(
     template=score_template
 )
 
+block_height_rule = """
+🚨 CRITICAL BLOCK HEIGHT RULE:
+- CURRENT BLOCK HEIGHT: ##{block_height}##
+- IF CURRENT BLOCK HEIGHT is NOT 0 (non-zero value):
+  * ALL GraphQL queries MUST include the blockHeight parameter
+  * Set blockHeight to the CURRENT BLOCK HEIGHT value
+  * This ensures queries return data at the specified block state
+  
+  ✅ CORRECT (when CURRENT BLOCK HEIGHT = 5460865):
+  {{
+    indexers(first: 5, blockHeight: "5460865") {{ nodes {{ id totalStake }} }}
+  }}
 
-SYS_CONTENT="""
+  {{
+    indexer(id: "0x123", blockHeight: "5460865") {{ id totalStake }}
+  }}
+  
+  {{
+    deployments(first: 5, orderBy: AMOUNT_DESC, blockHeight: "5460865") {{ nodes {{ id amount }} }}
+  }}
+
+  ❌ WRONG (missing blockHeight when CURRENT BLOCK HEIGHT is non-zero):
+  {{
+    indexers(first: 5) {{ nodes {{ id totalStake }} }}
+  }}
+
+- IF CURRENT BLOCK HEIGHT is 0:
+  * Do NOT add blockHeight parameter to queries
+  * Query normally without blockHeight
+
+"""
+
+BLOCK_HEIGHT_RULE_PROMPT = PromptTemplate(
+    input_variables=["block_height"],
+    template=block_height_rule
+)
+
+synthetic_miner = """
 You are an assistant that can use tools to answer questions.
 Rules:
 1. Always use the relevant tool(s) first before generating any direct answer.
 2. If you cannot answer a question with any available tool, you must call the 'call_graphql_agent' tool as a fallback.
 3. When calling 'call_graphql_agent', respond with an empty string ("") as content. Do not add any text, explanation, or formatting.
 
+🚨 CRITICAL BLOCK HEIGHT RULE:
+- CURRENT BLOCK HEIGHT: ##{block_height}##
+- IF CURRENT BLOCK HEIGHT is NOT 0 (non-zero value):
+  * ALL GraphQL queries MUST include the blockHeight parameter
+  * Set blockHeight to the CURRENT BLOCK HEIGHT value
+  * This ensures queries return data at the specified block state
+  
+  ✅ CORRECT (when CURRENT BLOCK HEIGHT = 5460865):
+  {{
+    indexers(first: 5, blockHeight: "5460865") {{ nodes {{ id totalStake }} }}
+  }}
+
+  {{
+    indexer(id: "0x123", blockHeight: "5460865") {{ id totalStake }}
+  }}
+  
+  {{
+    deployments(first: 5, orderBy: AMOUNT_DESC, blockHeight: "5460865") {{ nodes {{ id amount }} }}
+  }}
+
+  ❌ WRONG (missing blockHeight when CURRENT BLOCK HEIGHT is non-zero):
+  {{
+    indexers(first: 5) {{ nodes {{ id totalStake }} }}
+  }}
+
 Follow these rules strictly and do not deviate.
 """
+
+SYNTHETIC_MINER_PROMPT = PromptTemplate(
+    input_variables=["block_height"],
+    template=synthetic_miner
+)

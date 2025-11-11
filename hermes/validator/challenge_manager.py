@@ -1,6 +1,7 @@
 import asyncio
 import os
 from pathlib import Path
+import random
 import time
 import json
 import traceback
@@ -155,6 +156,7 @@ class ChallengeManager:
 
     async def challenge_loop(self):
         try:
+            block_cache: dict[str, str] = {}
             benchmark = BenchMark(self.settings.wallet, self.meta_config)
             while not self.event_stop.is_set():
                 await asyncio.sleep(self.challenge_interval)
@@ -208,12 +210,31 @@ class ChallengeManager:
                             self.token_usage_metrics,
                             round_id=self.round_id
                         )
+                        # question = "What is the total delegation amount across all indexers in the current era?"
                         if not question:
                             logger.warning(f"[ChallengeManager] - {cid_hash} Failed to generate question (attempt {attempt + 1}/{max_retries})")
                             continue
 
+                        # get latest block
+                        latest_block = await utils.getLatestBlock(project_config.endpoint, project_config.node_type)
+                        if latest_block is None and block_cache.get(cid_hash, None) is None:
+                            logger.warning(f"[ChallengeManager] - {cid_hash} Failed to get latest block (attempt {attempt + 1}/{max_retries})")
+                            continue
+                        
+                        if latest_block is not None:
+                            block_cache[cid_hash] = latest_block
+                        
+                        min_block = max(0, block_cache[cid_hash] - 1000)
+                        random_block_height = random.randint(min_block, block_cache[cid_hash])
+                        logger.info(f"[ChallengeManager] - {cid_hash} Selected block height: {random_block_height} (range: {min_block}-{block_cache[cid_hash]})")
 
-                        success, ground_truth, ground_cost, metrics_data = await self.generate_ground_truth(cid_hash, question, self.token_usage_metrics,  round_id=self.round_id)
+                        success, ground_truth, ground_cost, metrics_data = await self.generate_ground_truth(
+                            cid_hash=cid_hash,
+                            question=question,
+                            token_usage_metrics=self.token_usage_metrics,
+                            round_id=self.round_id,
+                            block_height=random_block_height
+                        )
 
                         is_valid = success and utils.is_ground_truth_valid(ground_truth)
 
@@ -226,7 +247,8 @@ class ChallengeManager:
                             success=is_valid,
                             ground_truth=ground_truth,
                             ground_cost=ground_cost,
-                            metrics_data=utils.pick(metrics_data, ["phase", "input_tokens", "input_cache_read_tokens", "output_tokens", "timestamp", "round_id"])
+                            # metrics_data=utils.pick(metrics_data, ["phase", "input_tokens", "input_cache_read_tokens", "output_tokens", "timestamp", "round_id"])
+                            metrics_data=metrics_data
                         )
 
                         if not is_valid:
@@ -251,7 +273,8 @@ class ChallengeManager:
                             uid=uid,
                             cid_hash=cid_hash,
                             challenge_id=challenge_id,
-                            question=question
+                            question=question,
+                            block_height=random_block_height
                         ) for uid in uids)
                     )
 
@@ -345,6 +368,7 @@ class ChallengeManager:
             
             projects = self.agent_manager.get_projects()
 
+            block_cache: dict[str, str] = {}
             for cid_hash, project_config in projects.items():
                 allowed_cid_hashs = os.getenv("ALLOWED_PROJECT_CID_HASHS", "").split(",")
                 if allowed_cid_hashs and cid_hash not in allowed_cid_hashs:
@@ -358,7 +382,21 @@ class ChallengeManager:
 
                 for q in questions:
                     challenge_id = str(uuid4())
-                    success, ground_truth, ground_cost, metrics_data = await self.generate_ground_truth(cid_hash, q, self.token_usage_metrics,  round_id=self.round_id)
+
+                    # get latest block
+                    latest_block = await utils.getLatestBlock(project_config.endpoint, project_config.node_type)
+                    if latest_block is None and block_cache.get(cid_hash, None) is None:
+                        logger.warning(f"[ChallengeManager] - {cid_hash} Failed to get latest block")
+                        continue
+
+                    if latest_block is not None:
+                        block_cache[cid_hash] = latest_block
+                    
+                    min_block = max(0, block_cache[cid_hash] - 1000)
+                    random_block_height = random.randint(min_block, block_cache[cid_hash])
+                    logger.info(f"[ChallengeManager] - {cid_hash} Selected block height: {random_block_height} (range: {min_block}-{block_cache[cid_hash]})")
+
+                    success, ground_truth, ground_cost, metrics_data = await self.generate_ground_truth(cid_hash, q, self.token_usage_metrics, round_id=self.round_id, block_height=random_block_height)
 
                     is_valid = success and utils.is_ground_truth_valid(ground_truth)
 
@@ -413,7 +451,8 @@ class ChallengeManager:
             cid_hash: str,
             question: str,
             token_usage_metrics: TokenUsageMetrics | None = None,
-            round_id: int = 0
+            round_id: int = 0,
+            block_height: int = 0,
         ) -> Tuple[bool, str | None, int, dict | None]:
         start_time = time.perf_counter()
         success = False
@@ -424,7 +463,12 @@ class ChallengeManager:
             if not agent:
                 raise ValueError(f"No server agent found for cid: {cid_hash}")
 
-            response = await agent.query_no_stream(question, prompt_cache_key=f"{cid_hash}_{start_time}", is_synthetic=True)
+            response = await agent.query_no_stream(
+                question,
+                prompt_cache_key=f"{cid_hash}_{start_time}",
+                is_synthetic=True,
+                block_height=block_height
+            )
 
             if os.getenv("LOG_GROUND_TRUTH", "").lower() == "true":
                 logger.info(f'------------------- Ground Truth Response for CID {cid_hash} ------------------ {response}')
@@ -462,12 +506,13 @@ class ChallengeManager:
         cid_hash: str,
         challenge_id: str,
         question: str,
+        block_height: int = 0,
     ):
-        synapse = SyntheticNonStreamSynapse(id=challenge_id, cid_hash=cid_hash, question=question)
+        synapse = SyntheticNonStreamSynapse(id=challenge_id, cid_hash=cid_hash, question=question, block_height=block_height)
         start_time = time.perf_counter()
 
         # Initialize response object with error defaults
-        r = SyntheticNonStreamSynapse(id=challenge_id, cid_hash=cid_hash, question=question)
+        r = SyntheticNonStreamSynapse(id=challenge_id, cid_hash=cid_hash, question=question, block_height=block_height)
         r.status_code = ErrorCode.FORWARD_SYNTHETIC_FAILED.value
         r.error = "Unknown error"
 

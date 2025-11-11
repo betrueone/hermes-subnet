@@ -21,10 +21,12 @@ from langchain_core.messages import (
     AnyMessage,
 )
 
-from langgraph.graph import StateGraph, MessagesState, START, END
+from langgraph.graph import StateGraph, START, END
+from langchain_core.messages import SystemMessage
 from agent.stats import ToolCountHandler
 from agent.subquery_graphql_agent.base import GraphQLAgent
 from common.project_manager import ProjectConfig, ProjectManager
+from common.prompt_template import BLOCK_HEIGHT_RULE_PROMPT
 from common.protocol import ExtendedMessagesState
 import common.utils as utils
 
@@ -164,9 +166,13 @@ class AgentManager:
                         if not human_messages:
                             return {"messages": [AIMessage(content="")]}
 
-                        # user_input = messages[-1].content if len(messages) > 0 else ""
+                        # Get block_height from state, default to 0 if not present
+                        block_height = state.get("block_height", 0) if isinstance(state, dict) else getattr(state, "block_height", 0)
+                        sys_msg = BLOCK_HEIGHT_RULE_PROMPT.format(block_height=block_height)
+                        messages_with_system = [SystemMessage(content=sys_msg)] + human_messages
+                        
                         response = await agent.executor.ainvoke(
-                            {"messages": human_messages},
+                            {"messages": messages_with_system},
                             config={
                                 "recursion_limit": 12,
                             }
@@ -176,6 +182,8 @@ class AgentManager:
                         
                         last = response['messages'][-1]
                         input_token_usage, input_cache_read_token_usage, output_token_usage = utils.extract_token_usage(response['messages'][0: -1])
+
+                        tool_calls = utils.extract_tool_calls(response['messages'])
 
                         if not last.content:
                             error_msg = utils.try_get_invalid_tool_messages(last)
@@ -187,7 +195,8 @@ class AgentManager:
                                 "intermediate_graphql_agent_input_token_usage": input_token_usage,
                                 "intermediate_graphql_agent_input_cache_read_token_usage": input_cache_read_token_usage,
                                 "intermediate_graphql_agent_output_token_usage": output_token_usage,
-                                "graphql_agent_hit": True
+                                "graphql_agent_hit": True,
+                                "tool_calls": tool_calls,
                             }
                     return call_graphql_agent
 
@@ -218,7 +227,7 @@ class AgentManager:
                 
                 llm_with_tools = self.llm_synthetic.bind_tools(miner_tools + [graphql_agent_tool] if enable_fallback else [])
 
-                async def call_model(state: MessagesState) -> int:
+                async def call_model(state: ExtendedMessagesState) -> int:
                     """
                     Call LLM with tools.
                     """

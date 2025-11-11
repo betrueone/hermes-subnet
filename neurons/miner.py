@@ -27,7 +27,7 @@ from loguru import logger
 from loguru._logger import Logger
 from bittensor.core.stream import StreamingSynapse
 from agent.stats import Phase, ProjectUsageMetrics, TokenUsageMetrics
-from common.prompt_template import SYS_CONTENT
+from common.prompt_template import SYNTHETIC_MINER_PROMPT
 from langchain_core.messages import HumanMessage, SystemMessage
 from common.table_formatter import table_formatter
 from common.agent_manager import AgentManager
@@ -191,7 +191,10 @@ class Miner(BaseNeuron):
         type = 0
         question = task.get_question()
         is_synthetic = True
-        messages = [SystemMessage(content=SYS_CONTENT), HumanMessage(content=question)]
+        messages = [
+            SystemMessage(content=SYNTHETIC_MINER_PROMPT.format(block_height=task.block_height)),
+            HumanMessage(content=question)
+        ]
 
         if isinstance(task, OrganicNonStreamSynapse):
             tag = "Organic"
@@ -204,6 +207,7 @@ class Miner(BaseNeuron):
         graph, graphql_agent = self.agent_manager.get_miner_agent(cid_hash)
 
         tool_hit = []
+        graphql_agent_inner_tool_calls = []
         answer = None
         response = None
         error = None
@@ -222,7 +226,7 @@ class Miner(BaseNeuron):
             else:
                 # messages = [SystemMessage(content=SYS_CONTENT), HumanMessage(content=question)]
                 # messages = [HumanMessage(content="Add 3 and 4. Multiply the output by 2. Divide the output by 5")]
-                r = await graph.ainvoke({"messages": messages})
+                r = await graph.ainvoke({"messages": messages, "block_height": task.block_height})
 
                 usage_info = self.token_usage_metrics.append(cid_hash, phase, r)
 
@@ -234,6 +238,8 @@ class Miner(BaseNeuron):
 
                 if r.get('graphql_agent_hit', False):
                     tool_hit.append(("graphql_agent_tool", 1))
+
+                graphql_agent_inner_tool_calls = r.get('tool_calls', [])
 
                 answer = r.get('messages')[-1].content or None
                 if not answer:
@@ -255,6 +261,12 @@ class Miner(BaseNeuron):
         rows = [f"💬 Answer: {answer}\n"]
         if error:
             rows.append(f"⚠️ {status_code.value} | {error}\n")
+        
+        rows.append(f" 📊 Metrics Data: {usage_info}\n")
+
+        if os.getenv("ENABLE_GRAPHQL_AGENT_TOOL_CALLS_LOG", "false").lower() == "true":
+            rows.append(f" 📊 GraphQL Agent tools: {graphql_agent_inner_tool_calls}\n")
+
         if len(tool_hit_names) > 0:
             rows.append(f"🛠️ Tools Hit: {', '.join(tool_hit_names)}\n")
         rows.append(f"⏱️ Cost: {elapsed}s")

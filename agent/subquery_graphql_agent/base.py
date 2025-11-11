@@ -253,7 +253,7 @@ class GraphQLAgent:
             prompt=prompt
         )
 
-    async def query_no_stream(self, question, prompt_cache_key: str = '', is_synthetic: bool = False):
+    async def query_no_stream(self, question, prompt_cache_key: str = '', is_synthetic: bool = False, block_height: str = 0):
         """Execute a non-streaming query.
 
         Args:
@@ -265,7 +265,8 @@ class GraphQLAgent:
             domain_name=self.config.domain_name,
             domain_capabilities=self.config.domain_capabilities,
             decline_message=self.config.decline_message,
-            is_synthetic=is_synthetic
+            is_synthetic=is_synthetic,
+            block_height=block_height
         )
 
         # Create a temporary agent with the appropriate prompt

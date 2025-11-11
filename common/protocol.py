@@ -63,6 +63,7 @@ class BaseSynapse(bt.Synapse):
     status_code: int | None = 200
     error: str | None = None
     elapsed_time: float | None = 0.0
+    block_height: int | None = 0
 
 class SyntheticNonStreamSynapse(BaseSynapse):
     question: str | None = None
@@ -197,7 +198,8 @@ class ExtendedMessagesState(MessagesState):
     intermediate_graphql_agent_input_token_usage: int
     intermediate_graphql_agent_input_cache_read_token_usage: int
     intermediate_graphql_agent_output_token_usage: int
-
+    block_height: int
+    tool_calls: list[str]
 
 class BaseBoardResponse(BaseModel):
     code: int
