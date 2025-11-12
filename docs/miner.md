@@ -276,7 +276,7 @@ tools = [ tool_1, tool_2 ]
 
 For starter, can copy `projects/miner/QmfUNJC1Qz8m3F67sQmxrwjuSAu4WaCR1iBdPPdzBruQ7P/tools.py` to other projects.
 
-To create your own tool, note that we use langgraph (https://github.com/langgraph/langgraph) to build the agent,
+To create your own tool, note that we use langgraph (https://github.com/langchain-ai/langgraph) to build the agent,
 it reads the tool's description and arguments from function docstring. So make sure you change them after the copy, and write clear and complete docstring for your tool.
 
 ### 4. Put it into production and monitor

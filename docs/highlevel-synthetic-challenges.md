@@ -9,7 +9,7 @@ This document outlines the architecture for synthetic challenges generation in t
 ```mermaid
 graph TB
     %% Main flow
-    A[User] -->|Visit| B[Facade Platforms]
+    A[User] -->|Visit| B[Authorized Callers]
     B -->|Redirect| C[Hermes Subnet App]
     C -->|Stake TAO| F[Bittensor Chain]
     C -->|Vote project| F[Bittensor Chain]
@@ -21,7 +21,7 @@ graph TB
     E -->|Submit scores| F[Bittensor Chain]
 
     %% Components as defined in task01.md
-    B[Facade Platforms]
+    B[Authorized Callers]
     C[Hermes Subnet App]
     D[Backend]
     E[Validator]
@@ -85,9 +85,9 @@ graph TD
 - **Vote Statistics**: Updates vote counts based on alpha token balances
 - **Project Distribution**: Provides valid project lists to validators
 
-### 3. Facade Platforms
+### 3. Authorized Callers
 - **OnFinality AI Agent Service**:
-- **SubQuery Network GraphQL Agent Service**: 
+- **SubQuery Network GraphQL Agent Service**:
 - **AskSubQuery.xyz**: 
 
 ### 4. Validator
@@ -162,7 +162,7 @@ In addition to synthetic challenges, validators also handle organic requests fro
 
 ```mermaid
 flowchart TD
-    subgraph Facade["Facade Platforms"]
+    subgraph Authorized["Authorized Callers"]
         FP["OnFinality AI Agent<br/>SubQuery GraphQL Agent<br/>asksubquery.xyz"]
     end
 
@@ -191,6 +191,7 @@ flowchart TD
 
     Chain["Bittensor Chain"]
 
+    %% Organic request flow
     FP -->|organic request| BE
     BE -->|route to live validator| VH
     VH -->|select top from Quality Score| M1
@@ -198,6 +199,7 @@ flowchart TD
     VH -->|return response| BE
     BE -->|response| FP
 
+    %% Scoring flows
     VH -.sample requests.-> QA
     QA -.update.-> QS
     QA -.contribute.-> CS
@@ -212,9 +214,11 @@ flowchart TD
     style M1 fill:#e8f5e9
 ```
 
+**Note**: Authorized callers implement a race condition mechanism where they simultaneously send requests to both the subnet backend (shown above) and their local GraphQL agent, returning the first successful response to users for optimal performance.
+
 ### Organic Request Flow
 
-1. **Request Source**: Organic requests originate from facade platforms (OnFinality AI Agent, SubQuery GraphQL Agent, asksubquery.xyz)
+1. **Request Source**: Organic requests originate from authorized callers (OnFinality AI Agent, SubQuery GraphQL Agent, asksubquery.xyz)
 2. **Backend Routing**: Backend maintains a validator registry and routes requests to live validators using routing algorithms
 3. **Miner Selection**: Validator selects the top miner based on Quality Score Ranking (not Combined Score)
 4. **Response Path**: Miner responds → validator → backend → caller
