@@ -27,7 +27,7 @@ from loguru import logger
 from loguru._logger import Logger
 from bittensor.core.stream import StreamingSynapse
 from agent.stats import Phase, ProjectUsageMetrics, TokenUsageMetrics
-from common.prompt_template import get_miner_self_tool_prompt
+from common.prompt_template import get_miner_self_tool_prompt, fill_miner_self_tool_prompt
 from langchain_core.messages import HumanMessage, SystemMessage
 from common.table_formatter import table_formatter
 from common.agent_manager import AgentManager
@@ -183,40 +183,44 @@ class Miner(BaseNeuron):
 
     async def _handle_task(
             self,
-            task: SyntheticNonStreamSynapse | OrganicNonStreamSynapse,
+            task: SyntheticNonStreamSynapse | OrganicNonStreamSynapse | OrganicStreamSynapse,
             log: Logger,
-    ) -> SyntheticNonStreamSynapse | OrganicNonStreamSynapse:
-        tag = "Synthetic"
-        phase = Phase.MINER_SYNTHETIC
-        type = 0
+    ) -> SyntheticNonStreamSynapse | OrganicNonStreamSynapse | OrganicStreamSynapse:
         question = task.get_question()
-        is_synthetic = True
 
         cid_hash = task.cid_hash
         graph, graphql_agent = self.agent_manager.get_miner_agent(cid_hash)
 
-        messages = [
-            SystemMessage(content=get_miner_self_tool_prompt(block_height=task.block_height, node_type=graphql_agent.config.node_type if graphql_agent else "unknown")),
-            HumanMessage(content=question)
-        ]
+        if isinstance(task, SyntheticNonStreamSynapse):
+            tag = "Synthetic"
+            type = 0
+            is_synthetic = True
+            phase = Phase.MINER_SYNTHETIC
+            messages = [
+                SystemMessage(content=get_miner_self_tool_prompt(block_height=task.block_height, node_type=graphql_agent.config.node_type if graphql_agent else "unknown")),
+                HumanMessage(content=question)
+            ]
 
-        if isinstance(task, OrganicNonStreamSynapse):
+        elif isinstance(task, OrganicNonStreamSynapse):
             tag = "Organic"
             type = 1
             is_synthetic = False
-            phase = Phase.MINER_ORGANIC
+            phase = Phase.MINER_ORGANIC_NONSTREAM
             messages = [SystemMessage(content=get_miner_self_tool_prompt(block_height=task.block_height, node_type=graphql_agent.config.node_type if graphql_agent else "unknown"))] + task.to_messages()
 
+        else:
+            raise ValueError("Unsupported task type")
+
+        answer = None
+        usage_info = ''
         tool_hit = []
         graphql_agent_inner_tool_calls = []
-        answer = None
         response = None
         error = None
         status_code = ErrorCode.SUCCESS
 
         before = time.perf_counter()
 
-        usage_info = ''
         try:
             if not graph:
                 log.warning(f"[{tag}] - {task.id} No agent found for project {cid_hash}")
@@ -224,37 +228,101 @@ class Miner(BaseNeuron):
                 status_code = ErrorCode.AGENT_NOT_FOUND
             else:
                 r = await graph.ainvoke({"messages": messages, "block_height": task.block_height})
-
-                # logger.info(f"[{tag}] - {task.id} Agent response: {r}")
-                usage_info = self.token_usage_metrics.append(cid_hash, phase, r)
-
-                # check tool stats
-                tool_hit = utils.try_get_tool_hit(
-                    r.get('messages', []),
-                    # exclude_tools=exclude_tools
-                )
-
-                if r.get('graphql_agent_hit', False):
-                    tool_hit.append(("graphql_agent_tool", 1))
-
-                graphql_agent_inner_tool_calls = r.get('tool_calls', [])
-
-                answer = r.get('messages')[-1].content or None
-                if not answer:
-                    error = utils.try_get_invalid_tool_messages(r.get('messages', []))
-                    status_code = ErrorCode.TOOL_ERROR if error is not None else status_code
-
-                if status_code == ErrorCode.SUCCESS:
-                    # For both organic and synthetic, only return the final answer
-                    response = answer
+                (
+                    answer,
+                    usage_info,
+                    tool_hit,
+                    graphql_agent_inner_tool_calls,
+                    response,
+                    error,
+                    status_code
+                ) = self.get_answer(tag, phase, task, r)
 
         except Exception as e:
-            # log.error(f"[Synthetic] - {task.id} Agent error: {e}")
+            log.error(f"handle task error {task.id} - {question}. {e}\n")
             error = str(e)
             status_code = ErrorCode.INTERNAL_SERVER_ERROR
 
         elapsed = utils.fix_float(time.perf_counter() - before)
         
+        self.print_table(
+            answer=answer,
+            usage_info=usage_info,
+            tool_hit=tool_hit,
+            graphql_agent_inner_tool_calls=graphql_agent_inner_tool_calls,
+            error=error,
+            status_code=status_code,
+
+            tag=tag,
+            task=task,
+            elapsed=elapsed,
+            log=log,
+        )
+
+        task.response = response
+        task.error = error
+        task.status_code = status_code.value
+
+        self.put_db(
+            type=type,
+            answer=answer,
+            usage_info=usage_info,
+            tool_hit=tool_hit,
+            error=error,
+            status_code=status_code,
+            elapsed=elapsed,
+            task=task,
+        )
+        return task
+
+    def get_answer(
+        self,
+        tag: str,
+        phase: Phase,
+        task: SyntheticNonStreamSynapse | OrganicNonStreamSynapse | OrganicStreamSynapse,
+        r: dict
+    ) -> tuple[str | None, dict, list, list, str | None, str | None, ErrorCode]:
+        # logger.info(f"[{tag}] - {task.id} Agent response: {r}")
+
+        usage_info = self.token_usage_metrics.append(task.cid_hash, phase, r)
+
+        # check tool stats
+        tool_hit = utils.try_get_tool_hit(
+            r.get('messages', []),
+        )
+
+        if r.get('graphql_agent_hit', False):
+            tool_hit.append(("graphql_agent_tool", 1))
+
+        graphql_agent_inner_tool_calls = r.get('tool_calls', [])
+
+        error = None
+        status_code = ErrorCode.SUCCESS
+
+        answer = r.get('messages')[-1].content or None
+        if not answer:
+            error = utils.try_get_invalid_tool_messages(r.get('messages', []))
+            status_code = ErrorCode.TOOL_ERROR if error is not None else status_code
+
+        response = None
+        if status_code == ErrorCode.SUCCESS:
+            response = answer
+        
+        return answer, usage_info, tool_hit, graphql_agent_inner_tool_calls, response, error, status_code
+        
+    def print_table(
+            self,
+            answer: str,
+            usage_info: str,
+            tool_hit: list,
+            graphql_agent_inner_tool_calls: list,
+            error: str,
+            status_code: ErrorCode,
+            tag: str,
+            task: SyntheticNonStreamSynapse | OrganicNonStreamSynapse | OrganicStreamSynapse,
+            elapsed: float,
+            log: Logger,
+    ):
         tool_hit_names = [t[0] for t in tool_hit]
         rows = [f"💬 Answer: {answer}\n"]
         if error:
@@ -271,31 +339,38 @@ class Miner(BaseNeuron):
         
         status_icon = "✅" if status_code == ErrorCode.SUCCESS else "❌"
         output = table_formatter.create_single_column_table(
-            f"🤖 {status_icon} {tag}: {question} ({task.id})",
+            f"🤖 {status_icon} {tag}: {task.get_question()} ({task.id})",
             rows,
-            caption=cid_hash
+            caption=task.cid_hash
         )
         log.info(f"\n{output}")
 
-        task.response = response
-        task.error = error
-        task.status_code = status_code
-
-        response_data = answer if status_code == ErrorCode.SUCCESS else task.error
+    def put_db(
+            self,
+            type: int,
+            answer: str,
+            usage_info: str,
+            tool_hit: list,
+            error: str | None,
+            status_code: ErrorCode,
+            elapsed: float,
+            task: SyntheticNonStreamSynapse | OrganicNonStreamSynapse | OrganicStreamSynapse,
+    ):
+        response_data = answer if status_code == ErrorCode.SUCCESS else error
+        
         self.db_queue.put_nowait({
             "type": type,
             "source": task.dendrite.hotkey,
             "task_id": task.id,
             "project_id": task.cid_hash,
             "cid": task.cid_hash,
-            "request_data": question,
+            "request_data": task.get_question(),
             "response_data": response_data or '',
-            "status_code": task.status_code,
+            "status_code": status_code.value,
             "tool_hit": json.dumps(tool_hit),
             "cost": elapsed,
             "token_usage_info": json.dumps(usage_info) if usage_info else ''
         })
-        return task
 
     async def forward_synthetic_non_stream(self, task: SyntheticNonStreamSynapse) -> SyntheticNonStreamSynapse:
         log = logger.bind(source=task.dendrite.hotkey)
@@ -305,99 +380,92 @@ class Miner(BaseNeuron):
     async def forward_organic_stream(self, synapse: OrganicStreamSynapse) -> StreamingSynapse.BTStreamingResponse:
         from starlette.types import Send
         log = logger.bind(source=synapse.dendrite.hotkey)
-        log.info(f"\n🤖 [Miner] Received organic stream: {synapse.completion}")
+        log.info(f"\n🤖 [Miner] Received organic stream: {synapse.id}")
 
-        # user_messages = [msg for msg in synapse.completion.messages if msg.role == "user"]
-        # user_input = user_messages[-1].content
         messages = synapse.to_messages()
         graph, graphql_agent = self.agent_manager.get_miner_agent(synapse.cid_hash)
 
+        if not graph:
+            error_msg = f"Error: No agent found for project {synapse.cid_hash}"
+            log.warning(f"[Miner] - {synapse.id} {error_msg}")
+            
+            async def error_streamer(send: Send):
+                """Send error message as streaming response."""
+                await send({
+                    "type": "http.response.body",
+                    "body": error_msg.encode('utf-8'),
+                    "more_body": False
+                })
+            
+            return synapse.create_streaming_response(error_streamer)
+        
+        fill_miner_self_tool_prompt(messages, block_height=synapse.block_height, node_type=graphql_agent.config.node_type if graphql_agent else "unknown")
+
         async def token_streamer(send: Send):
-            # logger.info(f"\n🤖 [Miner] Starting agent stream: {messages}")
-            # buffered_stream = []
-            # active_checkpoint_ns = None
-            # async for event in graph.astream_events({"messages": messages}, version="v2"):
-            #     logger.info(f"oooooooooooooooooooooooo: {event}\n")
-            #     if event["event"] == "on_chat_model_stream":
-            #         checkpoint_ns = event["metadata"].get("checkpoint_ns", "")
-            #         message = event["data"].get("chunk", {})
-            #         content = message.content
-            #         words.append(content)
-            #         graph_node_name = checkpoint_ns.split(":")[0] if checkpoint_ns else "unknown"
-                    # logger.info(f"   {event['metadata']} ---- {event['metadata'].get('langgraph_node','')} - {event['data']} -----graph_node_name: {graph_node_name} ==== {content} type: {type(content)}")
-
-                    # if graph_node_name == "final_filter":
-                    #     await send({
-                    #             "type": "http.response.body",
-                    #             "body": content.encode('utf-8'),
-                    #             "more_body": True
-                    #     })
-
-                    # if active_checkpoint_ns is None:
-                    #     active_checkpoint_ns = graph_node_name
-
-                    # if graph_node_name == active_checkpoint_ns:
-                    #     if graph_node_name == "graphql_agent":
-                    #         await send({
-                    #             "type": "http.response.body",
-                    #             "body": content.encode('utf-8'),
-                    #             "more_body": True
-                    #         })
-                    #     else:
-                    #         buffered_stream.append(content)
-                    # else:
-                    #     buffered_stream.clear()
-                    #     active_checkpoint_ns = graph_node_name
-                    #     await send({
-                    #         "type": "http.response.body",
-                    #         "body": content.encode('utf-8'),
-                    #         "more_body": True
-                    #     })
-
-            # for content in buffered_stream:
-            #     # logger.info(f"\n🤖 [Miner] Agent chunk type: {type(content)}, content: {content}")
-            #     await send({
-            #         "type": "http.response.body",
-            #         "body": content.encode('utf-8'),
-            #         "more_body": True
-            #     })
-            #     await asyncio.sleep(0.25)
-
-            # useful for debug
-
-            async for event in graph.astream({"messages": messages}, version="v2"):
-                # logger.info(f"mmmmmmmmmmmmmmmmmmmm {event} {type(event)}\n")
-                for _, value in event.items():
-                    message = value.get("messages", [])[-1].content
-                    idx = 0
-                    while idx < len(message):
-                        chunk = message[idx:idx+10]
-                        await send({
-                            "type": "http.response.body",
-                            "body": chunk.encode('utf-8'),
-                            "more_body": True
-                        })
-                        await asyncio.sleep(0.25)
-                        idx += 10
+            r = None
+            tag = "Organic-S"
+            phase = Phase.MINER_ORGANIC_STREAM
+            before = time.perf_counter()
+            async for event in graph.astream(
+                {
+                    "messages": messages,
+                    "block_height": synapse.block_height
+                },
+                version="v2"
+            ):
+                for key, value in event.items():
+                    if key == "final":
+                        r = value
+                        message = value.get("messages", [])[-1].content
+                        idx = 0
+                        while idx < len(message):
+                            chunk = message[idx:idx+10]
+                            await send({
+                                "type": "http.response.body",
+                                "body": chunk.encode('utf-8'),
+                                "more_body": True
+                            })
+                            await asyncio.sleep(0.25)
+                            idx += 10
                 
-                # if "final_filter" in event:
-                #     message = event["final_filter"].get("messages", [])[-1].content
-                #     # logger.info(f"final message: {message}")
-                #     idx = 0
-                #     while idx < len(message):
-                #         chunk = message[idx:idx+10]
-                #         await send({
-                #             "type": "http.response.body",
-                #             "body": chunk.encode('utf-8'),
-                #             "more_body": True
-                #         })
-                #         await asyncio.sleep(0.25)
-                #         idx += 10
             await send({
                 "type": "http.response.body",
                 "body": b"",
                 "more_body": False
             })
+            elapsed = utils.fix_float(time.perf_counter() - before)
+            synapse.elapsed_time = elapsed
+            (
+                answer,
+                usage_info,
+                tool_hit,
+                graphql_agent_inner_tool_calls,
+                response,
+                error,
+                status_code
+            ) = self.get_answer(tag, phase, synapse, r)
+            self.print_table(
+                answer=answer,
+                usage_info=usage_info,
+                tool_hit=tool_hit,
+                graphql_agent_inner_tool_calls=graphql_agent_inner_tool_calls,
+                error=error,
+                status_code=status_code,
+                tag=tag,
+                task=synapse,
+                elapsed=elapsed,
+                log=log,
+            )
+            self.put_db(
+                type=2,
+                answer=answer,
+                usage_info=usage_info,
+                tool_hit=tool_hit,
+                error=error,
+                status_code=status_code,
+                elapsed=elapsed,
+                task=synapse,
+            )
 
         return synapse.create_streaming_response(token_streamer)
 

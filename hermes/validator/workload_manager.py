@@ -10,6 +10,7 @@ from loguru import logger
 from typing import TYPE_CHECKING
 import torch
 from agent.stats import TokenUsageMetrics
+from common.table_formatter import table_formatter
 import common.utils as utils
 from common.protocol import OrganicNonStreamSynapse
 if TYPE_CHECKING:
@@ -89,11 +90,13 @@ class WorkloadManager:
         challenge_manager: "ChallengeManager", 
         organic_score_queue: list,
         work_state_path: str | Path = None,
-        token_usage_metrics: TokenUsageMetrics = None
+        token_usage_metrics: TokenUsageMetrics = None,
+        meta_config: dict = {},
     ):
         self.challenge_manager = challenge_manager
         self.organic_score_queue = organic_score_queue
         self.token_usage_metrics = token_usage_metrics
+        self.meta_config = meta_config
 
         self.uid_sample_scores = {}
         # self.uid_organic_workload_counter = defaultdict(BucketCounter)
@@ -103,10 +106,11 @@ class WorkloadManager:
 
         self.organic_task_compute_interval = int(os.getenv("WORKLOAD_ORGANIC_TASK_COMPUTE_INTERVAL", 30))
         self.organic_task_concurrency = int(os.getenv("WORKLOAD_ORGANIC_TASK_CONCURRENCY", 5))
-        self.organic_task_sample_rate = int(os.getenv("WORKLOAD_ORGANIC_TASK_SAMPLE_RATE", 5))
+        self.organic_task_sample_rate = int(os.getenv("WORKLOAD_ORGANIC_TASK_SAMPLE_RATE", 1))
         self.organic_workload_counter_full_purge_interval = int(os.getenv("WORKLOAD_ORGANIC_WORKLOAD_COUNTER_FULL_PURGE_INTERVAL", 3600))
         self.work_state_path = work_state_path
         self.collect_count = 0
+        self.round_id = 1
         self.load_state()
 
     async def collect(self, uid: int, hotkey: str):
@@ -207,6 +211,8 @@ class WorkloadManager:
                     
                     if self.organic_score_queue:
                         miner_uid, hotkey, resp_dict = self.organic_score_queue.pop(0)
+
+                        logger.info(f"[WorkloadManager] Processing organic task for miner: {miner_uid}, resp_dict id: {resp_dict}")
                         response = OrganicNonStreamSynapse(**resp_dict)
 
                         miner_uid_work_load = await self.collect(miner_uid, hotkey)
@@ -217,8 +223,13 @@ class WorkloadManager:
                         q = response.completion.messages[-1].content
                         logger.info(f"[WorkloadManager] compute organic task({response.id}) for miner: {miner_uid}, response: {response}. question: {q}")
 
-                        success, ground_truth, ground_cost = await self.challenge_manager.generate_ground_truth(response.cid_hash, q)
-
+                        success, ground_truth, ground_cost, metrics_data = await self.challenge_manager.generate_ground_truth(
+                            cid_hash=response.cid_hash,
+                            question=response.get_question(),
+                            token_usage_metrics=self.token_usage_metrics,
+                            round_id=f"Organic-{self.round_id}",
+                            block_height=response.block_height
+                        )
                         # Validate ground truth content
                         is_valid = success and utils.is_ground_truth_valid(ground_truth)
                         if not is_valid:
@@ -226,11 +237,28 @@ class WorkloadManager:
                             continue
 
                         logger.info(f"[WorkloadManager] Generated task({response.id}) ground truth: {ground_truth}, cost: {ground_cost}, miner.response: {response.response}")
-                        zip_scores, _, _ = await self.challenge_manager.scorer_manager.compute_challenge_score(
-                            ground_truth, 
-                            ground_cost, 
+
+                        zip_scores, ground_truth_scores, elapse_weights, miners_elapse_time = await self.challenge_manager.scorer_manager.compute_challenge_score(
+                            ground_truth,
+                            ground_cost,
                             [response],
-                            challenge_id=response.id
+                            challenge_id=response.id,
+                            cid_hash=response.cid_hash,
+                            token_usage_metrics=self.token_usage_metrics,
+                            min_latency_improvement_ratio=self.meta_config.get("min_latency_improvement_ratio", 0.2),
+                            round_id=f"Organic-{self.round_id}",
+                        )
+
+                        table_formatter.create_workload_summary_table(
+                            round_id=self.round_id,
+                            challenge_id=response.id,
+                            ground_truth=ground_truth,
+                            uids=[miner_uid],
+                            responses=[response],
+                            ground_truth_scores=ground_truth_scores,
+                            elapse_weights=elapse_weights,
+                            zip_scores=zip_scores,
+                            cid=response.cid_hash
                         )
 
                         if miner_uid not in self.uid_sample_scores:

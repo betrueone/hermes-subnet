@@ -467,7 +467,7 @@ def omit(obj: dict, keys: list) -> dict:
     
     return {key: value for key, value in obj.items() if key not in keys}
 
-async def getLatestBlock(endpoint: str, node_type: str) -> int | None:
+async def get_latest_block(endpoint: str, node_type: str) -> int | None:
     """
     Get the latest block height from a GraphQL endpoint.
     

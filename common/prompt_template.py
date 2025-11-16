@@ -320,3 +320,17 @@ Rules:
 
 Follow these rules strictly and do not deviate.
 """
+
+def fill_miner_self_tool_prompt(messages: list, block_height: int = 0, node_type: str = "") -> None:
+    from langchain_core.messages import SystemMessage
+    
+    prompt_start = "You are an assistant that can use tools to answer questions."
+    
+    for i, msg in enumerate(messages):
+        if hasattr(msg, 'type') and msg.type == 'system':
+            content = msg.content.strip()
+            if content.startswith(prompt_start):
+                return
+    
+    # If not found, insert at the beginning
+    messages.insert(0, SystemMessage(content=get_miner_self_tool_prompt(block_height, node_type)))

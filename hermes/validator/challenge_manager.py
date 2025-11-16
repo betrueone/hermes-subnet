@@ -60,6 +60,7 @@ class ChallengeManager:
         synthetic_model_name: str | None = None,
         score_model_name: str | None = None,
         meta_config: dict = None,
+        ipc_common_config: dict = None,
         event_stop: Event = None,
         synthetic_token_usage: list = None,
         v: "Validator" = None,
@@ -93,6 +94,7 @@ class ChallengeManager:
         self.agent_manager = AgentManager(
             save_project_dir=Path(save_project_dir),
             llm_synthetic=self.llm_synthetic,
+            ipc_common_config=ipc_common_config,
         )
 
         self.scorer_manager = ScorerManager(
@@ -104,7 +106,8 @@ class ChallengeManager:
             challenge_manager=self,
             organic_score_queue=organic_score_queue,
             work_state_path=Path(self.settings.base_dir) / ".data" / f"{v.role}_workload_state.pt",
-            token_usage_metrics=self.token_usage_metrics
+            token_usage_metrics=self.token_usage_metrics,
+            meta_config=meta_config or {}
         )
 
         self.synthetic_score = synthetic_score
@@ -210,14 +213,12 @@ class ChallengeManager:
                             self.token_usage_metrics,
                             round_id=self.round_id
                         )
-                        # question = "What is the total delegation amount across all indexers in the current era?"
-                        # question = "What  is  the largest  number of liquidity providers any single trading pool currently has?"
                         if not question:
                             logger.warning(f"[ChallengeManager] - {cid_hash} Failed to generate question (attempt {attempt + 1}/{max_retries})")
                             continue
 
                         # get latest block
-                        latest_block = await utils.getLatestBlock(project_config.endpoint, project_config.node_type)
+                        latest_block = await utils.get_latest_block(project_config.endpoint, project_config.node_type)
                         if latest_block is None and block_cache.get(cid_hash, None) is None:
                             logger.warning(f"[ChallengeManager] - {cid_hash} Failed to get latest block (attempt {attempt + 1}/{max_retries})")
                             continue
@@ -367,7 +368,7 @@ class ChallengeManager:
             
             projects = self.agent_manager.get_projects()
 
-            block_cache: dict[str, str] = {}
+            block_cache: dict[str, int] = {}
             for cid_hash, project_config in projects.items():
                 allowed_cid_hashs = os.getenv("ALLOWED_PROJECT_CID_HASHS", "").split(",")
                 if allowed_cid_hashs and cid_hash not in allowed_cid_hashs:
@@ -383,7 +384,7 @@ class ChallengeManager:
                     challenge_id = str(uuid4())
 
                     # get latest block
-                    latest_block = await utils.getLatestBlock(project_config.endpoint, project_config.node_type)
+                    latest_block = await utils.get_latest_block(project_config.endpoint, project_config.node_type)
                     if latest_block is None and block_cache.get(cid_hash, None) is None:
                         logger.warning(f"[ChallengeManager] - {cid_hash} Failed to get latest block")
                         continue
@@ -391,11 +392,9 @@ class ChallengeManager:
                     if latest_block is not None:
                         block_cache[cid_hash] = latest_block
                     
-                    min_block = max(0, block_cache[cid_hash] - 1000)
-                    random_block_height = random.randint(min_block, block_cache[cid_hash])
-                    logger.info(f"[ChallengeManager] - {cid_hash} Selected block height: {random_block_height} (range: {min_block}-{block_cache[cid_hash]})")
+                    logger.info(f"[ChallengeManager] - {cid_hash} Selected block height: {block_cache[cid_hash]}")
 
-                    success, ground_truth, ground_cost, metrics_data = await self.generate_ground_truth(cid_hash, q, self.token_usage_metrics, round_id=self.round_id, block_height=random_block_height)
+                    success, ground_truth, ground_cost, metrics_data = await self.generate_ground_truth(cid_hash, q, self.token_usage_metrics, round_id=self.round_id, block_height=block_cache[cid_hash])
 
                     is_valid = success and utils.is_ground_truth_valid(ground_truth)
 

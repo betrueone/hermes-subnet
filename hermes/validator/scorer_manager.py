@@ -76,7 +76,7 @@ class ScorerManager:
         except Exception as e:
             logger.error(f"[ScorerManager] - LLM scoring error: {e}")
             return 0.0
-        return summary_response.content
+        return summary_response.content.strip() if summary_response.content else "0.0"
     
     def update_scores(self, 
         uids: List[int], 

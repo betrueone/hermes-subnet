@@ -29,34 +29,6 @@ class ChatCompletionRequest(BaseModel):
 class CapacitySynapse(bt.Synapse):
     time_elapsed: int = 0
     response: Optional[dict] = None
-
-class SyntheticStreamSynapse(bt.StreamingSynapse):
-    time_elapsed: int = 0
-    question: str | None = None
-    response: Optional[dict] = None
-
-    async def process_streaming_response(self, response: "ClientResponse"):
-        logger.info(f"Processing streaming response: {response}")
-
-        buffer = ""
-        async for chunk in response.content.iter_any():
-            text = chunk.decode("utf-8", errors="ignore")
-            buffer += text
-            logger.info(f"Streaming response part: {text}")
-            yield text
-
-        self._buffer = buffer
-
-
-    def extract_response_json(self, r: "ClientResponse") -> dict:
-        logger.info(f"Extracting JSON from response: {r}")
-        self.response = {"final_text": getattr(self, "_buffer", "")}
-        return self.response
-
-
-    def deserialize(self):
-        return '[end]'
-
 class BaseSynapse(bt.Synapse):
     id: str | None = None
     cid_hash: str | None = None
@@ -65,6 +37,38 @@ class BaseSynapse(bt.Synapse):
     elapsed_time: float | None = 0.0
     block_height: int | None = 0
 
+class CompletionMessagesMixin:
+    """Mixin class for synapses that contain ChatCompletionRequest with messages."""
+    
+    id: str | None = None
+    cid_hash: str | None = None
+    block_height: int | None = 0
+    elapsed_time: float | None = 0.0
+    completion: ChatCompletionRequest | None = None
+    
+    def to_messages(self) -> list[AnyMessage]:
+        """Convert ChatCompletionRequest messages to LangChain message types."""
+        if not self.completion:
+            return []
+        messages = []
+        for msg in self.completion.messages:
+            if msg.role == "system":
+                messages.append(SystemMessage(content=msg.content))
+            elif msg.role == "user":
+                messages.append(HumanMessage(content=msg.content))
+            elif msg.role == "assistant":
+                messages.append(AIMessage(content=msg.content))
+        return messages
+    
+    def get_question(self) -> str | None:
+        """Extract the last user question from completion messages."""
+        if not self.completion:
+            return None
+        user_messages = [msg for msg in self.completion.messages if msg.role == "user"]
+        if not user_messages:
+            return None
+        return user_messages[-1].content
+
 class SyntheticNonStreamSynapse(BaseSynapse):
     question: str | None = None
     response: str | None = ''
@@ -72,66 +76,35 @@ class SyntheticNonStreamSynapse(BaseSynapse):
     def get_question(self):
         return self.question
 
-class OrganicStreamSynapse(bt.StreamingSynapse):
-    time_elapsed: int = 0
-    cid_hash: str | None = None
-    completion: ChatCompletionRequest | None = None
-    response: Optional[dict] = None
+class OrganicStreamSynapse(CompletionMessagesMixin, bt.StreamingSynapse):
+    status_code: int | None = 200
+    error: str | None = None
+    response: str | None = None
 
-    async def process_streaming_response(self, response: "ClientResponse"):
-        # logger.info(f"Processing streaming response: {response}")
+    async def process_streaming_response(self, clientResponse: "ClientResponse"):
+        # logger.info(f"Processing streaming response: {clientResponse}")
+        # logger.info(f"Streaming response success: {clientResponse.ok}, status={clientResponse.status}")
+
+        axon_status_code = clientResponse.headers.get('bt_header_axon_status_code', '200')
+        self.status_code = axon_status_code
+
         buffer = ""
-        async for chunk in response.content.iter_any():
+        async for chunk in clientResponse.content.iter_any():
             text = chunk.decode("utf-8", errors="ignore")
             buffer += text
             # logger.info(f"Streaming response part: {text}")
             yield text
-
         self._buffer = buffer
 
     def extract_response_json(self, r: "ClientResponse") -> dict:
-        # logger.info(f"Extracting JSON from response: {r}")
-        self.response = {"final_text": getattr(self, "_buffer", "")}
-        return self.response
-
-    def to_messages(self) -> list[AnyMessage]:
-        if not self.completion:
-            return []
-        messages = []
-        for msg in self.completion.messages:
-            if msg.role == "system":
-                messages.append(SystemMessage(content=msg.content))
-            elif msg.role == "user":
-                messages.append(HumanMessage(content=msg.content))
-            elif msg.role == "assistant":
-                messages.append(AIMessage(content=msg.content))
-        return messages
-
+        return {}
+    
     def deserialize(self):
         return ''
-class OrganicNonStreamSynapse(BaseSynapse):
-    completion: ChatCompletionRequest | None = None
+
+class OrganicNonStreamSynapse(CompletionMessagesMixin, BaseSynapse):
     response: str | None = ''
 
-    def to_messages(self) -> list[AnyMessage]:
-        if not self.completion:
-            return []
-        messages = []
-        for msg in self.completion.messages:
-            if msg.role == "system":
-                messages.append(SystemMessage(content=msg.content))
-            elif msg.role == "user":
-                messages.append(HumanMessage(content=msg.content))
-            elif msg.role == "assistant":
-                messages.append(AIMessage(content=msg.content))
-        return messages
-
-    def get_question(self):
-        if not self.completion:
-            return None
-        user_messages = [msg for msg in self.completion.messages if msg.role == "user"]
-        user_input = user_messages[-1].content
-        return user_input
 class StatsMiddleware(BaseHTTPMiddleware):
     def __init__(
         self,
@@ -194,6 +167,7 @@ class StatsMiddleware(BaseHTTPMiddleware):
             return self.handle_token_stats(request.query_params.get("latest", "2h"))
         return await call_next(request)
 class ExtendedMessagesState(MessagesState):
+    errored: bool = False
     graphql_agent_hit: bool
     intermediate_graphql_agent_input_token_usage: int
     intermediate_graphql_agent_input_cache_read_token_usage: int

@@ -93,7 +93,8 @@ class Phase(Enum):
     GENERATE_MINER_GROUND_TRUTH_SCORE = "ground_truth_score"
 
     MINER_SYNTHETIC = "miner_synthetic_challenge"
-    MINER_ORGANIC = "miner_organic_challenge"
+    MINER_ORGANIC_NONSTREAM = "miner_organic_nonstream_challenge"
+    MINER_ORGANIC_STREAM = "miner_organic_stream_challenge"
 
 class TokenUsageMetrics:
     datas: list[any] = []
@@ -109,7 +110,7 @@ class TokenUsageMetrics:
             phase: Phase,
             response: BaseMessage | dict[str, any],
             extra: dict = {}
-        ) -> dict[str, int]:
+        ) -> dict[str, any]:
         extra_input_tokens = 0
         extra_input_cache_read_tokens = 0
         extra_output_tokens = 0

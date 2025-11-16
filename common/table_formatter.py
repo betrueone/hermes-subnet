@@ -241,6 +241,50 @@ class TableFormatter:
         )
         self.log_with_newline(challenge_output, "info")
 
+    def create_workload_summary_table(
+        self,
+        round_id: str,
+        challenge_id: str,
+        ground_truth: str,
+        uids: list[int],
+        responses: list[OrganicNonStreamSynapse],
+        ground_truth_scores: list[float],
+        elapse_weights: list[float],
+        zip_scores: list[float],
+        cid: str
+    ):
+        header = "🤖 Organic Workload" + f" ({round_id} | {challenge_id})"
+        rows = []
+        for idx, uid in enumerate(uids):
+            r = responses[idx]
+            rstr = r.response
+                    
+            # uid_hotkey = f"{uid}|{r.dendrite.hotkey}" if getattr(r.dendrite, 'hotkey', None) else f"{uid}"
+            rows.append([
+                f"{uid}",
+                f"{rstr}",
+                f"{ground_truth}",
+                f"{r.elapsed_time}s",
+                f"{ground_truth_scores[idx]}",
+                f"{elapse_weights[idx]}",
+                f"{zip_scores[idx]}",
+            ])
+        miners_response_output = self.create_multiple_column_table(
+            title=f"{header} - Miners Response",
+            caption=f"cid: {cid}",
+            columns=[
+                "UID",
+                "Response",
+                "Ground Truth",
+                "Elapsed Time",
+                "Truth Score",
+                "Elapse Weight",
+                "Score"
+            ],
+            rows=rows
+        )
+        self.log_with_newline(miners_response_output, "info")
+
     def log_with_newline(self, content: str, level: str = "info", **kwargs):
         """Log content with newline prefix, avoiding format string issues"""
         log_func = getattr(logger.opt(raw=True), level)

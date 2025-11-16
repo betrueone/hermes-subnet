@@ -50,19 +50,29 @@ class AgentManager:
     save_project_dir: str
     llm_synthetic: ChatOpenAI
 
-    def __init__(self, save_project_dir: str, llm_synthetic: ChatOpenAI):
+    def __init__(self, save_project_dir: str, llm_synthetic: ChatOpenAI, ipc_common_config: dict = None):
         self.save_project_dir = save_project_dir
         self.graphql_agent = {}
         self.miner_agent = {}
         self.llm_synthetic = llm_synthetic
         self.project_manager = ProjectManager(self.llm_synthetic, self.save_project_dir)
-
+        self.ipc_common_config = ipc_common_config
 
     async def start(self, pull=True, role: Literal["", "validator", "miner"] = "", silent: bool = False):
         if pull:
             await self.project_manager.pull(silent=silent)
         else:
             self.project_manager.load()
+
+        if self.ipc_common_config is not None:
+            projects_config = self.project_manager.get_projects()
+            for cid_hash, config in projects_config.items():
+                self.ipc_common_config.update({
+                    cid_hash: {
+                        "node_type": config.node_type,
+                        "endpoint": config.endpoint,
+                    }
+                })
 
         if role == "miner":
             self._init_miner_agents()
@@ -210,6 +220,9 @@ class AgentManager:
                     state: Union[list[AnyMessage], dict[str, Any], BaseModel],
                     messages_key: str = "messages",
                 ):
+                    if getattr(state, "errored", False):
+                        return "final"
+            
                     if isinstance(state, list):
                         ai_message = state[-1]
                     elif isinstance(state, dict) and (messages := state.get(messages_key, [])):
@@ -225,37 +238,47 @@ class AgentManager:
                             if tool_call['name'] == "graphql_agent_tool":
                                 return "call_graphql_agent"
                         return "tools"
-                    return END
+                    return "final"
 
                 # logger.info(f"[AgentManager] Project {cid_hash} - Detected changes in tools. Created: {[utils.get_func_name(t) for t in created]}, Updated: {[utils.get_func_name(t) for t in updated]}, Deleted: {deleted}")
-                
-                call_graphql_agent = make_call_graphql_agent(graphql_agent)
                 
                 llm_with_tools = self.llm_synthetic.bind_tools(miner_tools + [graphql_agent_tool] if enable_fallback else [])
 
                 def make_call_model(llm: ChatOpenAI):
                     async def call_model_func(state: ExtendedMessagesState) -> int:
-                        """
-                            Call LLM with tools.
-                        """
                         messages = state["messages"]
-                        # logger.info(f" call_model - messages: {messages} ")
-                        response_messages = await llm.ainvoke(messages)
-
-                        return {"messages": [response_messages]}
+                        errored = False
+                        logger.info(f" call_model - messages: {messages} ")
+                        try:
+                            response_messages = await llm.ainvoke(messages)
+                            logger.info(f" call_model - response: {response_messages} ")
+                        except Exception as e:
+                            logger.error(f" call_model - error: {e} ")
+                            response_messages = AIMessage(content=f"Error invoking LLM: {e}")
+                            errored = True
+                        return {"messages": [response_messages], "errored": errored}
                     return call_model_func
 
-                call_model = make_call_model(llm_with_tools)
+                def make_final_node():
+                    async def final_func(state: ExtendedMessagesState) -> int:
+                        messages = state["messages"]
+                        # logger.info(f" final - state: {state} ")
+                        return state
+                    return final_func
+
 
                 builder = StateGraph(ExtendedMessagesState)
-                builder.add_node("call_model", call_model)
+                builder.add_node("call_model", make_call_model(llm_with_tools))
                 builder.add_node("tools", ToolNode(miner_tools))
-                builder.add_node("call_graphql_agent", call_graphql_agent)
-                builder.add_edge("call_graphql_agent", END)
+                builder.add_node("call_graphql_agent", make_call_graphql_agent(graphql_agent))
+                builder.add_node("final", make_final_node())
+                builder.add_edge("call_graphql_agent", "final")
                 builder.add_conditional_edges(
                     "call_model",
                     tool_condition,
                 )
+                builder.add_edge("final", END)
+
                 builder.add_edge("tools", "call_model")
                 builder.add_edge(START, "call_model")
                 graph = builder.compile()
