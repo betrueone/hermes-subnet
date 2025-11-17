@@ -356,7 +356,8 @@
 // Helper function for rendering type
 function renderType(type) {
     if (type === 0) return '<span class="badge bg-primary">Synthetic</span>';
-    if (type === 1) return '<span class="badge bg-success">Organic</span>';
+    if (type === 1) return '<span class="badge bg-info">Organic</span>';
+    if (type === 2) return '<span class="badge bg-success">Organic-S</span>';
     return type;
 }
 
@@ -524,11 +525,15 @@ function createRow(row) {
     const cost = typeof row[10] === 'number' ? row[10].toFixed(2) : parseFloat(row[10] || 0).toFixed(2);
     
     let typeHtml = renderType(row[1]);
-    if ((row[1] === 0 || row[1] === 1) && String(statusCode) !== '200') {
-        // Synthetic or Organic and non-200, set to red
-        typeHtml = row[1] === 0
-            ? '<span class="badge bg-danger">Synthetic</span>'
-            : '<span class="badge bg-danger">Organic</span>';
+    if ((row[1] === 0 || row[1] === 1 || row[1] === 2) && String(statusCode) !== '200') {
+        // Synthetic or Organic or Organic-S and non-200, set to red
+        if (row[1] === 0) {
+            typeHtml = '<span class="badge bg-danger">Synthetic</span>';
+        } else if (row[1] === 1) {
+            typeHtml = '<span class="badge bg-danger">Organic</span>';
+        } else if (row[1] === 2) {
+            typeHtml = '<span class="badge bg-danger">Organic-S</span>';
+        }
     }
     tr.innerHTML = `
         <td>${typeHtml}</td>
