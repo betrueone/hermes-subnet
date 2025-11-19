@@ -195,10 +195,12 @@ class ChallengeManager:
                 project_score_matrix = []
 
                 for cid_hash, project_config in projects.items():
-                    allowed_cid_hashs = os.getenv("ALLOWED_PROJECT_CID_HASHS", "").split(",")
-                    if allowed_cid_hashs and cid_hash not in allowed_cid_hashs:
-                        logger.info(f"[ChallengeManager] - {cid_hash} Skipping project not in allowed list")
-                        continue
+                    allowed_cid_hashs_str = os.getenv("ALLOWED_PROJECT_CID_HASHS", "").strip()
+                    if allowed_cid_hashs_str:
+                        allowed_cid_hashs = allowed_cid_hashs_str.split(",")
+                        if cid_hash not in allowed_cid_hashs:
+                            logger.info(f"[ChallengeManager] - {cid_hash} Skipping project not in allowed list")
+                            continue
 
                     # Retry loop: attempt to generate a valid challenge for this project
                     max_retries = int(os.getenv("CHALLENGE_GENERATION_MAX_RETRIES", 3))
