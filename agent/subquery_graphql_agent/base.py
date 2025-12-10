@@ -189,16 +189,9 @@ class ProjectConfig:
             self.manifest = {}
         if self.domain_capabilities is None:
             self.domain_capabilities = [
-                "Blockchain data indexed by this project",
-                "Entity relationships and queries",
-                "Project-specific metrics and analytics"
             ]
         if self.suggested_questions is None:
             self.suggested_questions = [
-                "What types of data can I query from this project?",
-                "Show me a sample GraphQL query",
-                "What entities are available in this schema?",
-                "How can I filter the data?"
             ]
 
 
