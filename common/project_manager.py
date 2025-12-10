@@ -253,7 +253,7 @@ class ProjectManager:
                 model_name = os.getenv("LLM_MODEL", "gpt-4o-mini")
                 llm = ChatOpenAI(
                     model=model_name,
-                    temperature=0  # Same as GraphQLAgent
+                    temperature=0.5  # Same as GraphQLAgent
                 )
             # Prepare schema content for LLM (truncate if too long)
             schema_preview = schema_content[:3000] if len(schema_content) > 3000 else schema_content
@@ -299,22 +299,11 @@ Based on the project info and GraphQL schema entities, generate:
 
 IMPORTANT: Look at the GraphQL types to understand what this project tracks.
 
-Respond ONLY with valid JSON in this exact format (no markdown code blocks):
+Respond with JSON matching:
 {{
-  "domain_name": "Specific Project Name",
-  "domain_capabilities": [
-    "Query [specific entity] data and relationships",
-    "Analyze [specific metrics] and trends", 
-    "Track [specific events/transactions]",
-    "Monitor [specific blockchain activities]"
-  ],
-  "decline_message": "I'm specialized in {project_name} data queries. I can help you with [specific data types], but I cannot assist with [their topic]. Please ask me about {project_name} data instead.",
-  "suggested_questions": [
-    "Show me recent [specific entity type] transactions",
-    "What are the top [entity] by [field]?",
-    "How many [events] happened in the last day?",
-    "Can you show me a sample GraphQL query for [entity]?"
-  ]
+  "domain_name": "Project name",
+  "domain_capabilities": ["..."], // A list of specific capabilities or topics this project can answer questions about.
+  "decline_message": "A message explaining what is out of scope for this project."
 }}
 
 Make each capability very specific to the entities found in the schema."""

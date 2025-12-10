@@ -72,8 +72,8 @@ def create_thegraph_schema_info_content(schema_content: str) -> str:
    - active_not_in: [Boolean!] - not match any value in list
    
    NESTED FILTERS (AND/OR Logic):
-   - _and: [EntityFilter!] - all conditions must be true
-   - _or: [EntityFilter!] - at least one condition must be true
+   - and: [EntityFilter!] - all conditions must be true
+   - or: [EntityFilter!] - at least one condition must be true
    - Can be nested arbitrarily deep for complex logic
    
    EXAMPLES:
@@ -84,8 +84,8 @@ def create_thegraph_schema_info_content(schema_content: str) -> str:
    - {{ name_contains_nocase: "alice" }} - case-insensitive substring
    - {{ symbol_starts_with: "UNI" }} - prefix matching
    - {{ balance_gte: "1000000000000000000" }} - BigInt >= 1 ETH
-   - {{ _and: [{{ active: true }}, {{ balance_gt: "0" }}] }} - AND logic
-   - {{ _or: [{{ symbol: "ETH" }}, {{ symbol: "BTC" }}] }} - OR logic
+   - {{ and: [{{ active: true }}, {{ balance_gt: "0" }}] }} - AND logic
+   - {{ or: [{{ symbol: "ETH" }}, {{ symbol: "BTC" }}] }} - OR logic
 
 4. 📈 ORDER BY PATTERNS:
    - orderBy: field_name (camelCase field names)
@@ -145,8 +145,8 @@ def create_thegraph_schema_info_content(schema_content: str) -> str:
 ✅ {{ tokens(where: {{ symbol_in: ["ETH", "BTC"] }}) {{ id, symbol }} }}
 ✅ {{ tokens(where: {{ name_contains_nocase: "uniswap" }}) {{ id, name, symbol }} }}
 ✅ {{ users(where: {{ id_not_in: ["0x123", "0x456"] }}) {{ id, address }} }}
-✅ {{ pairs(where: {{ _and: [{{ token0: "0x123" }}, {{ reserve0_gt: "1000" }}] }}) {{ id, token0, token1 }} }}
-✅ {{ swaps(where: {{ _or: [{{ amount0_gt: "100" }}, {{ amount1_gt: "100" }}] }}) {{ id, amount0, amount1 }} }}
+✅ {{ pairs(where: {{ and: [{{ token0: "0x123" }}, {{ reserve0_gt: "1000" }}] }}) {{ id, token0, token1 }} }}
+✅ {{ swaps(where: {{ or: [{{ amount0_gt: "100" }}, {{ amount1_gt: "100" }}] }}) {{ id, amount0, amount1 }} }}
 ✅ {{ tokens(where: {{ symbol_starts_with_nocase: "uni" }}) {{ id, symbol, name }} }}
 ✅ {{ positions(where: {{ owner_not: "0x0000", liquidity_gt: "0" }}) {{ id, owner, liquidity }} }}
 
