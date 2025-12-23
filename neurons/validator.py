@@ -81,7 +81,7 @@ class Validator(BaseNeuron):
             self,
             organic_score_queue: list,
             synthetic_score: list,
-            miners_dict: dict,
+            ipc_miners_dict: dict,
             synthetic_token_usage: list,
             meta_config: dict,
             ipc_common_config: dict,
@@ -94,7 +94,7 @@ class Validator(BaseNeuron):
             dendrite=self.dendrite,
             organic_score_queue=organic_score_queue,
             synthetic_score=synthetic_score,
-            miners_dict=miners_dict,
+            ipc_miners_dict=ipc_miners_dict,
             synthetic_token_usage=synthetic_token_usage,
             meta_config=meta_config,
             ipc_common_config=ipc_common_config,
@@ -113,14 +113,14 @@ class Validator(BaseNeuron):
     async def run_api(
             self,
             organic_score_queue: list,
-            miners_dict: dict[int, dict],
+            ipc_miners_dict: dict[int, dict],
             synthetic_score: list,
             synthetic_token_usage: list,
             ipc_common_config: dict,
         ):
         super().start(flag=RoleFlag.VALIDATOR)
         self.organic_score_queue = organic_score_queue
-        self.miners_dict = miners_dict
+        self.ipc_miners_dict = ipc_miners_dict
         self.synthetic_score = synthetic_score
         self.synthetic_token_usage = synthetic_token_usage
         self.uid_select_count = defaultdict(int)
@@ -152,7 +152,7 @@ class Validator(BaseNeuron):
         except Exception as e:
             logger.error(f"Failed to serve API: {e}")
 
-    async def run_miner_checking(self, miners_dict: dict):
+    async def run_miner_checking(self, ipc_miners_dict: dict):
         import bittensor as bt
 
         async def handle_availability(
@@ -186,7 +186,7 @@ class Validator(BaseNeuron):
                     if uid == self.uid:
                         continue
                     all_miner_uids.append(uid)
-                logger.debug(f"[CheckMiner] all_miner_uids: {all_miner_uids}, Current miners: {miners_dict}")
+                logger.debug(f"[CheckMiner] all_miner_uids: {all_miner_uids}, Current miners: {ipc_miners_dict}")
 
                 tasks = []
                 for uid in all_miner_uids:
@@ -204,7 +204,7 @@ class Validator(BaseNeuron):
                 # Filter out None responses
                 responses = [res for res in responses if res is not None]
                 for r in responses:
-                    miners_dict[r["uid"]] = {
+                    ipc_miners_dict[r["uid"]] = {
                         "hotkey": r["hotkey"],
                         "projects": r["projects"]
                     }
@@ -242,7 +242,7 @@ class Validator(BaseNeuron):
         synapse = OrganicNonStreamSynapse(id=body.id, cid_hash=cid_hash, block_height=block_height or 0, completion=body)
         try:
             available_miners = []
-            for uid, info in self.miners_dict.items():
+            for uid, info in self.ipc_miners_dict.items():
                 projects = info.get("projects", [])
                 if cid_hash in projects:
                     available_miners.append(uid)
@@ -329,14 +329,18 @@ class Validator(BaseNeuron):
                 return synapse
 
             start_time = time.perf_counter()
-            response = await self.dendrite.forward(
+            response: OrganicStreamSynapse = await self.dendrite.forward(
                 axons=axons,
                 synapse=synapse,
                 deserialize=True,
                 timeout=self.forward_miner_timeout,
             )
+
             elapsed_time = utils.fix_float(time.perf_counter() - start_time)
             response.elapsed_time = elapsed_time
+            if not response.is_success:
+                response.status_code = response.dendrite.status_code if response.dendrite is not None else ErrorCode.ORGANIC_ERROR_RESPONSE.value
+                response.error = response.dendrite.status_message if response.dendrite is not None else "Unknown error from dendrite"
 
             if len(self.organic_score_queue) < 1000:
                 logger.info(f"[Organic] - {body.id} organic_score_queue size: {len(self.organic_score_queue)}, is_success: {response.is_success}")
@@ -359,7 +363,7 @@ class Validator(BaseNeuron):
 def run_challenge(
         organic_score_queue: list,
         synthetic_score: list,
-        miners_dict: dict,
+        ipc_miners_dict: dict,
         synthetic_token_usage: list,
         meta_config: dict,
         ipc_common_config: dict,
@@ -376,7 +380,7 @@ def run_challenge(
         asyncio.run(Validator().run_challenge(
             organic_score_queue,
             synthetic_score,
-            miners_dict,
+            ipc_miners_dict,
             synthetic_token_usage,
             meta_config,
             ipc_common_config,
@@ -390,7 +394,7 @@ def run_challenge(
 
 def run_api(
         organic_score_queue: list,
-        miners_dict: dict,
+        ipc_miners_dict: dict,
         synthetic_score: list,
         synthetic_token_usage: list,
         meta_config: dict,
@@ -406,7 +410,7 @@ def run_api(
     try:
         asyncio.run(Validator().run_api(
             organic_score_queue,
-            miners_dict,
+            ipc_miners_dict,
             synthetic_score,
             synthetic_token_usage,
             ipc_common_config=ipc_common_config,
@@ -417,7 +421,7 @@ def run_api(
         logger.error(f"API process error: {e}")
         raise
 
-def run_miner_checking(miners_dict: dict):
+def run_miner_checking(ipc_miners_dict: dict):
     proc = mp.current_process()
     HermesLogger.configure_loguru(
         file=f"{LOGGER_DIR}/{proc.name}.log",
@@ -426,7 +430,7 @@ def run_miner_checking(miners_dict: dict):
 
     logger.info(f"run_miner_checking process id: {os.getpid()}")
     try:
-        asyncio.run(Validator().run_miner_checking(miners_dict))
+        asyncio.run(Validator().run_miner_checking(ipc_miners_dict))
     except KeyboardInterrupt:
         logger.info("MinerChecking process received shutdown signal, exiting gracefully...")
     except Exception as e:
@@ -437,7 +441,7 @@ async def main():
     with mp.Manager() as manager:
         try:
             organic_score_queue = manager.list([])
-            miners_dict = manager.dict({})
+            ipc_miners_dict = manager.dict({})
             synthetic_score = manager.list([{}])
             synthetic_token_usage = manager.list([])
             meta_config = manager.dict({})
@@ -451,7 +455,7 @@ async def main():
                 args=(
                     organic_score_queue,
                     synthetic_score,
-                    miners_dict,
+                    ipc_miners_dict,
                     synthetic_token_usage,
                     meta_config,
                     ipc_common_config,
@@ -467,7 +471,7 @@ async def main():
                 target=run_api,
                 args=(
                     organic_score_queue,
-                    miners_dict,
+                    ipc_miners_dict,
                     synthetic_score,
                     synthetic_token_usage,
                     meta_config,
@@ -481,7 +485,7 @@ async def main():
 
             miner_checking_process = mp.Process(
                 target=run_miner_checking,
-                args=(miners_dict,),
+                args=(ipc_miners_dict,),
                 name="MinerCheckingProcess",
                 daemon=True,
             )

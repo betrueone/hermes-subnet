@@ -9,7 +9,10 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from neurons.validator import Validator
 
-
+'''
+Note: Please Do Not Change This Address, 
+Otherwise You Will Not Be Able to Receive Organic Requests Successfully.
+'''
 ALLOWED_SOURCE = ["5FWxwB3DbWvmV9WD2FfojafAw2juiw7MMbc2TQi82SBSgW6Q"]
 
 app = FastAPI()
@@ -76,7 +79,8 @@ async def token_stats(request: Request, latest: str = "1h"):
 
 
 @app.get("/health")
-def health():
-    return {"status": "ok"}
+def health(request: Request):
+    v: "Validator" = request.app.state.validator
+    return {"status": "ok", "miners": [{"uid": uid, "projects": data.get("projects", [])} for uid, data in v.ipc_miners_dict.items()]}
 
 app.include_router(router, prefix="/v1")

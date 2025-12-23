@@ -41,7 +41,7 @@ class ChallengeManager:
     scorer_manager: ScorerManager
     workload_manager: WorkloadManager
     synthetic_score: list
-    miners_dict: dict
+    ipc_miners_dict: dict
     meta_config: dict
     event_stop: Event
     scores: torch.Tensor
@@ -56,7 +56,7 @@ class ChallengeManager:
         dendrite: bt.Dendrite,
         organic_score_queue: list,
         synthetic_score: list,
-        miners_dict: dict,
+        ipc_miners_dict: dict,
         synthetic_model_name: str | None = None,
         score_model_name: str | None = None,
         meta_config: dict = None,
@@ -116,7 +116,7 @@ class ChallengeManager:
         )
 
         self.synthetic_score = synthetic_score
-        self.miners_dict = miners_dict
+        self.ipc_miners_dict = ipc_miners_dict
         self.meta_config = meta_config
         self.event_stop = event_stop
         self.V = v
@@ -175,7 +175,7 @@ class ChallengeManager:
 
                 miner_uids = []
                 miner_hotkeys = []
-                for uid, miner_info in self.miners_dict.items():
+                for uid, miner_info in self.ipc_miners_dict.items():
                     miner_uids.append(uid)
                     miner_hotkeys.append(miner_info["hotkey"])
 
