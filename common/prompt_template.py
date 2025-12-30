@@ -35,6 +35,7 @@ Your task:
 12. Do NOT ask hypothetical questions (like "What would happen if...", "How might...", "What could...", "For a specified ..."). Only ask direct factual questions about actual data.
 13. Do NOT ask question which has placeholders in the question.
 14. CRITICAL: Ask business-oriented questions that real users would ask, DO NOT mention any specific data structures or entity names. Real users don't know about backend schema details. Instead, ask about business concepts.
+15. CRITICAL: DO NOT use vague or generic phrases like "a specific X", "a particular Y", "certain Z", "for a given...", "for an entity...", etc. These make questions unanswerable without additional context. Instead, ask about: (a) aggregated data across ALL items (e.g., "What is the total...", "How many...", "What is the average..."), or (b) superlative queries that identify specific items (e.g., "Which one has the highest...", "What is the largest..."). Questions must be concrete and directly answerable from the schema.
 
 
 Output: [Question only, no explanations]
