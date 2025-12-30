@@ -31,6 +31,7 @@ def create_thegraph_schema_info_content(schema_content: str) -> str:
 1. 📊 ENTITY QUERIES:
    - Single query: entityName(id: ID!,subgraphError: _SubgraphErrorPolicy_! = deny) → EntityType
    - Collection query: entityNames(skip: Int, first: Int, where: EntityFilter, orderBy: EntityOrderBy, orderDirection: OrderDirection, subgraphError: _SubgraphErrorPolicy_! = deny) → [EntityType]
+   - ⚠️ PLURAL NAMING: If entity ends with 's' (e.g., Series), plural adds 'es' (e.g., serieses). Follow standard English pluralization rules.
    - Multiple queries: You can send multiple independent queries in a single GraphQL request if they have no data dependencies between them
 
 2. 🔗 RELATIONSHIP QUERIES:
