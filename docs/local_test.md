@@ -287,9 +287,14 @@ NETUID=2
 EXTERNAL_IP=192.168.1.60
 PORT=8085
 
-# change
+# board service url
 BOARD_SERVICE=http://192.168.156.91:3000
+
+# your openai key
 OPENAI_API_KEY=sk-xx
+
+# For TheGraph project, API token is required
+THEGRAPH_API_TOKEN=token-xx
 
 
 # for graphql agent & synthetic challenge
@@ -319,10 +324,14 @@ NETUID=2
 EXTERNAL_IP=192.168.1.60
 PORT=8086
 
-# change
+# board service url
 BOARD_SERVICE=http://192.168.156.91:3000
+
+# your openai key
 OPENAI_API_KEY=sk-xx
 
+# For TheGraph project, API token is required
+THEGRAPH_API_TOKEN=token-xx
 
 # miner self-owned agent
 MINER_LLM_MODEL=gpt-4o-mini

@@ -216,7 +216,7 @@ The dashboard updates in real-time and provides essential information for optimi
 # Optimise Miner Rewards
 
 ## Scoring Mechanism Explained
-1. Validators pick the selected project(s) from the board (https://subnet.subquery.network)
+1. Validators pick the selected project(s) from the board (https://hermes.subquery.network)
 2. Each of those projects has a subquery endpoint or a subgraph endpoint attached to it.
 3. Validators generate a synthetic challenge based on the project's schema and send it to miners. At the same time, validators send the challenge to the graphql agent for ground truth.
 4. Validators evaluate the miner's response based on its factual accuracy and response time.
@@ -231,7 +231,7 @@ There are two ways to do such and earn more rewards than competing miners:
 ## Step by Step Guide
 ### 1. Discover the project to optimise
 
-Go to the [board](https://subnet.subquery.network) and find the selected project for miners to work on.
+Go to the [board](https://hermes.subquery.network) and find the selected project for miners to work on.
 
 ![board ui for subnet](imgs/board_ui.png)
 
@@ -278,6 +278,9 @@ For starter, can copy `projects/miner/QmfUNJC1Qz8m3F67sQmxrwjuSAu4WaCR1iBdPPdzBr
 
 To create your own tool, note that we use langgraph (https://github.com/langchain-ai/langgraph) to build the agent,
 it reads the tool's description and arguments from function docstring. So make sure you change them after the copy, and write clear and complete docstring for your tool.
+
+**Note:** To ensure the spatio-temporal uniqueness of challenges, each challenge automatically includes a `block_height` parameter. Therefore, every tool must include a `block_height` parameter. For specific examples, refer to the sample tools in the `projects/miner` directory.
+
 
 ### 4. Put it into production and monitor
 Restart miner.
