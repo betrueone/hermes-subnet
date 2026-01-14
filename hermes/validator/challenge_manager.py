@@ -346,10 +346,10 @@ class ChallengeManager:
                                 "statusCode": resp.status_code,
                                 "error": resp.error,
                                 "answer": resp.response[:500] if resp.response else None,
-                                "inputTokens": resp.usage_info.get("input_tokens", 0),
-                                "inputCacheReadTokens": resp.usage_info.get("input_cache_read_tokens", 0),
-                                "outputTokens": resp.usage_info.get("output_tokens", 0),
-                                "toolCalls": [json.loads(t) for t in resp.usage_info.get("tool_calls", [])],
+                                "inputTokens": resp.usage_info.get("input_tokens", 0) if resp.usage_info else 0,
+                                "inputCacheReadTokens": resp.usage_info.get("input_cache_read_tokens", 0) if resp.usage_info else 0,
+                                "outputTokens": resp.usage_info.get("output_tokens", 0) if resp.usage_info else 0,
+                                "toolCalls": [json.loads(t) for t in resp.usage_info.get("tool_calls", [])] if resp.usage_info else [],
                                 "graphqlAgentInnerToolCalls": [json.loads(t) for t in resp.graphql_agent_inner_tool_calls],
                             }
                             for uid, hotkey, elapse_time, truth_score, resp in zip(uids, hotkeys, miners_elapse_time, ground_truth_scores, responses)
@@ -577,7 +577,7 @@ class ChallengeManager:
                 deserialize=False,
                 timeout=self.forward_miner_timeout,
             )
-            logger.debug(f"🔍 [ChallengeManager] - {challenge_id} MINER RESPONSE [UID: {uid}] - ✅ is_success: {r.is_success} - {r.dendrite.status_code}")
+            logger.debug(f"🔍 [ChallengeManager] - {challenge_id} MINER RESPONSE [UID: {uid}] - ✅ is_success: {r.is_success} - {r.dendrite.status_code} - {r.dendrite.status_message}")
         except KeyboardInterrupt:
             logger.info(f"[ChallengeManager] - {challenge_id} Miner query interrupted by user [UID: {uid}]")
             raise  # Re-raise to allow graceful shutdown

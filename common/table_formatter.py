@@ -192,7 +192,7 @@ class TableFormatter:
                 f"{uid}",
                 f"{hotkeys[idx]}",
                 f"{workload_counts[idx]}",
-                f"{", ".join(quality_scores[idx])}",
+                f"{', '.join(map(str, quality_scores[idx]))}",
                 f"{workload_score[idx]}",
                 f"{new_ema_scores[uid][0]}"
             ])
