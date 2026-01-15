@@ -80,7 +80,7 @@ class BenchMark:
         else:
             return
 
-        logger.info(f"[Benchmark] Prepared benchmark data {benchmark_data}. {should_upload}")
+        logger.debug(f"[Benchmark] Prepared benchmark data {benchmark_data}. {should_upload}")
 
         if should_upload:
             # Add to pending uploads for this cid
@@ -161,7 +161,7 @@ class BenchMark:
                     timeout=aiohttp.ClientTimeout(total=30)
                 ) as resp:
                     if resp.status == 200:
-                        logger.info(f"[Benchmark] Successfully uploaded {len(data_batch)} benchmark(s)")
+                        logger.debug(f"[Benchmark] Successfully uploaded {len(data_batch)} benchmark(s)")
                     else:
                         error_text = await resp.text()
                         logger.error(f"[Benchmark] Upload failed with status {resp.status}: {error_text}")

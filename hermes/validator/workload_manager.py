@@ -223,7 +223,7 @@ class WorkloadManager:
                     if self.organic_score_queue:
                         miner_uid, hotkey, resp_dict = self.organic_score_queue.pop(0)
 
-                        logger.info(f"[WorkloadManager] Processing organic task for miner: {miner_uid}, resp_dict id: {resp_dict}")
+                        logger.debug(f"[WorkloadManager] Processing organic task for miner: {miner_uid}, resp_dict id: {resp_dict}")
                         response = OrganicNonStreamSynapse(**resp_dict)
 
                         miner_uid_work_load = await self.collect(miner_uid, hotkey)
@@ -232,7 +232,7 @@ class WorkloadManager:
                             continue
 
                         question = response.get_question()
-                        logger.info(f"[WorkloadManager] compute organic task({response.id}) for miner: {miner_uid}, response: {response}. question: {question}")
+                        logger.debug(f"[WorkloadManager] compute organic task({response.id}) for miner: {miner_uid}, response: {response}. question: {question}")
 
                         success, ground_truth, ground_cost, metrics_data, model_name = await self.challenge_manager.generate_ground_truth(
                             cid_hash=response.cid_hash,
@@ -247,7 +247,7 @@ class WorkloadManager:
                             logger.warning(f"[WorkloadManager] Invalid ground truth for task({response.id}), skipping quality scoring. Ground truth: {ground_truth}")
                             continue
 
-                        logger.info(f"[WorkloadManager] Generated task({response.id}) ground truth: {ground_truth}, cost: {ground_cost}, miner.response: {response.response}")
+                        logger.debug(f"[WorkloadManager] Generated task({response.id}) ground truth: {ground_truth}, cost: {ground_cost}, miner.response: {response.response}")
 
                         zip_scores, ground_truth_scores, elapse_weights, miners_elapse_time = await self.challenge_manager.scorer_manager.compute_challenge_score(
                             ground_truth,
