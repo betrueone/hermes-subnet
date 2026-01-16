@@ -79,7 +79,7 @@ class HermesLogger:
         # Configure specific loggers to reduce noise
         logging.getLogger("httpx").setLevel(logging.ERROR)
         logging.getLogger("urllib3").setLevel(logging.WARNING) 
-        logging.getLogger("asyncio").setLevel(logging.WARNING)
+        logging.getLogger("asyncio").setLevel(logging.ERROR)
         logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 
 
