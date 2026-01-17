@@ -5,7 +5,8 @@ import random
 import time
 import json
 import traceback
-from typing import Tuple, TYPE_CHECKING
+from dataclasses import dataclass
+from typing import Tuple, TYPE_CHECKING, Optional
 from uuid import uuid4
 import bittensor as bt
 from langchain_openai import ChatOpenAI
@@ -27,6 +28,17 @@ import common.utils as utils
 from hermes.validator.question_generator import question_generator
 from hermes.validator.scorer_manager import ScorerManager
 from hermes.validator.workload_manager import WorkloadManager
+
+
+@dataclass
+class EpochInfo:
+    current_block: int
+    tempo: int
+    blocks_since_last_step: int
+    epoch_start_block: int
+    epoch_index: int
+    next_epoch_start_block: int
+    blocks_until_next_epoch: int
 
 
 class ChallengeManager:
@@ -123,6 +135,14 @@ class ChallengeManager:
         self.V = v
 
         self._last_set_weight_time = 0
+        self._last_epoch_submitted: Optional[int] = None
+        self.block_time_seconds = float(os.getenv("CHAIN_BLOCK_TIME_SECONDS", 12))
+        self.epoch_submission_buffer_seconds = int(os.getenv("EPOCH_SUBMISSION_BUFFER_SECONDS", 60))
+        if self.block_time_seconds <= 0:
+            logger.warning("[ChallengeManager] Invalid CHAIN_BLOCK_TIME_SECONDS, defaulting to 12 seconds")
+            self.block_time_seconds = 12.0
+        buffer_blocks = int(self.epoch_submission_buffer_seconds / self.block_time_seconds)
+        self.epoch_submission_buffer_blocks = max(1, buffer_blocks)
         # self.scores = torch.zeros_like(torch.tensor(self.settings.metagraph.S), dtype=torch.float32)
         # self.device = 'cpu'
         self.set_weight_interval = int(os.getenv("SET_WEIGHT_INTERVAL", 60 * 30))  # seconds
@@ -279,11 +299,12 @@ class ChallengeManager:
                     responses = await asyncio.gather(
                         *(self.query_miner(
                             uid=uid,
+                            hotkey=hotkey,
                             cid_hash=cid_hash,
                             challenge_id=challenge_id,
                             question=question,
                             block_height=block_cache[cid_hash]
-                        ) for uid in uids)
+                        ) for uid, hotkey in zip(uids, hotkeys))
                     )
 
                     # score result
@@ -311,11 +332,13 @@ class ChallengeManager:
                         round_id=self.round_id,
                         challenge_id=challenge_id,
                         uids=uids,
+                        hotkeys=hotkeys,
                         responses=responses,
                         ground_truth_scores=ground_truth_scores,
                         elapse_weights=elapse_weights,
                         zip_scores=zip_scores,
-                        cid=cid_hash
+                        cid=cid_hash,
+                        max_table_rows=int(os.getenv("MAX_TABLE_ROWS", 20))
                     )
 
                     await self.benchmark.upload(
@@ -353,6 +376,7 @@ class ChallengeManager:
                                 "graphqlAgentInnerToolCalls": [json.loads(t) for t in resp.graphql_agent_inner_tool_calls] if resp.graphql_agent_inner_tool_calls else [],
                             }
                             for uid, hotkey, elapse_time, truth_score, resp in zip(uids, hotkeys, miners_elapse_time, ground_truth_scores, responses)
+                            if resp.status_code != ErrorCode.NOT_HEALTHY.value
                         ],
                     )
 
@@ -379,7 +403,8 @@ class ChallengeManager:
                     workload_counts=workload_counts,
                     quality_scores=log_quality_scores,
                     workload_score=workload_score,
-                    new_ema_scores=new_ema_scores
+                    new_ema_scores=new_ema_scores,
+                    max_table_rows=int(os.getenv("MAX_TABLE_ROWS", 20))
                 )
                 self.round_id += 1
 
@@ -557,6 +582,7 @@ class ChallengeManager:
     async def query_miner(
         self,
         uid: int,
+        hotkey: str,
         cid_hash: str,
         challenge_id: str,
         question: str,
@@ -571,13 +597,18 @@ class ChallengeManager:
         r.error = "Unknown error"
 
         try:
-            r: SyntheticNonStreamSynapse = await self.dendrite.forward(
-                axons=self.settings.metagraph.axons[uid],
-                synapse=synapse,
-                deserialize=False,
-                timeout=self.forward_miner_timeout,
-            )
-            logger.debug(f"🔍 [ChallengeManager] - {challenge_id} MINER RESPONSE [UID: {uid}] - ✅ is_success: {r.is_success} - {r.dendrite.status_code} - {r.dendrite.status_message}")
+            if not hotkey:
+                r.dendrite = bt.TerminalInfo(status_code=200)
+                r.status_code = ErrorCode.NOT_HEALTHY.value
+                r.error = "Miner is not healthy"
+            else:
+                r: SyntheticNonStreamSynapse = await self.dendrite.forward(
+                    axons=self.settings.metagraph.axons[uid],
+                    synapse=synapse,
+                    deserialize=False,
+                    timeout=self.forward_miner_timeout,
+                )
+                logger.debug(f"🔍 [ChallengeManager] - {challenge_id} MINER RESPONSE [UID: {uid}] - ✅ is_success: {r.is_success} - {r.dendrite.status_code} - {r.dendrite.status_message}")
         except KeyboardInterrupt:
             logger.info(f"[ChallengeManager] - {challenge_id} Miner query interrupted by user [UID: {uid}]")
             raise  # Re-raise to allow graceful shutdown
@@ -594,27 +625,111 @@ class ChallengeManager:
     async def set_weight(self):
         while not self.event_stop.is_set():
             await asyncio.sleep(10)
-            if time.time() - self._last_set_weight_time > self.set_weight_interval:
-                try:
-                    scores_dict = self.scorer_manager.get_last_overall_scores()
-                    uids = list(scores_dict.keys())
-                    scores = list(scores_dict.values())
-                    if not uids:
-                        continue
-                    scores = [s[0] for s in scores]
-                    self._set_weights(uids, scores)
+            epoch_info = self._get_epoch_info()
+            should_force_epoch_submission = self._should_force_epoch_submission(epoch_info)
+            if not should_force_epoch_submission and time.time() - self._last_set_weight_time <= self.set_weight_interval:
+                continue
 
-                    self._last_set_weight_time = time.time()
-                except Exception as e:
-                    logger.error(f"[ChallengeManager] Failed to set_weight: {e}")
+            reason = "epoch-guard" if should_force_epoch_submission else "interval"
+            try:
+                uids, scores = self._prepare_scores_for_submission()
+                if not uids:
+                    uids, scores = self._build_fallback_uniform_weights()
+                    if not uids:
+                        logger.warning("[ChallengeManager] No miners available for fallback weight submission, skipping.")
+                        self._last_set_weight_time = time.time()
+                        continue
+                    logger.info("[ChallengeManager] No historical scores available. Submitting uniform fallback weights.")
+
+                self._set_weights(uids, scores)
+                self._last_set_weight_time = time.time()
+                if epoch_info:
+                    self._last_epoch_submitted = epoch_info.epoch_index
+                logger.info(f"[ChallengeManager] Submitted weights due to {reason}.")
+            except Exception as e:
+                logger.error(f"[ChallengeManager] Failed to set_weight: {e}")
+
+    def _get_epoch_info(self) -> Optional[EpochInfo]:
+        try:
+            meta_info: bt.MetagraphInfo = self.settings.subtensor.get_metagraph_info(
+                netuid=self.settings.netuid,
+                field_indices=[
+                    bt.SelectiveMetagraphIndex.Block,
+                    bt.SelectiveMetagraphIndex.Tempo,
+                    bt.SelectiveMetagraphIndex.BlocksSinceLastStep,
+                ]
+            )
+        except Exception as e:
+            logger.warning(f"[ChallengeManager] Unable to get epoch info: {e}")
+            return None
+
+        if meta_info is None:
+            logger.warning("[ChallengeManager] Meta info is unavailable.")
+            return None
+
+        current_block = meta_info.block
+        tempo = meta_info.tempo
+        blocks_since_last_step = meta_info.blocks_since_last_step
+
+        if not current_block:
+            current_block = getattr(self.settings.subtensor, "block", None)
+
+        if not current_block:
+            logger.warning("[ChallengeManager] Current block is unavailable.")
+            return None
+
+        epoch_start_block = current_block - blocks_since_last_step
+        epoch_index = epoch_start_block // tempo if tempo else 0
+        next_epoch_start_block = epoch_start_block + tempo
+        blocks_until_next_epoch = max(0, next_epoch_start_block - current_block)
+
+        return EpochInfo(
+            current_block=current_block,
+            tempo=tempo,
+            blocks_since_last_step=blocks_since_last_step,
+            epoch_start_block=epoch_start_block,
+            epoch_index=epoch_index,
+            next_epoch_start_block=next_epoch_start_block,
+            blocks_until_next_epoch=blocks_until_next_epoch,
+        )
+
+    def _should_force_epoch_submission(self, epoch_info: Optional[EpochInfo]) -> bool:
+        if epoch_info is None:
+            return False
+
+        if self._last_epoch_submitted is None:
+            return epoch_info.blocks_until_next_epoch <= self.epoch_submission_buffer_blocks
+
+        if epoch_info.epoch_index > self._last_epoch_submitted and epoch_info.blocks_until_next_epoch <= self.epoch_submission_buffer_blocks:
+            return True
+
+        return False
+
+    def _prepare_scores_for_submission(self) -> tuple[list[int], list[float]]:
+        scores_dict = self.scorer_manager.get_last_overall_scores()
+        if not scores_dict:
+            return [], []
+        sorted_scores = sorted(scores_dict.items(), key=lambda item: item[0])
+        uids = [uid for uid, _ in sorted_scores]
+        scores = [score for _, (score, _) in sorted_scores]
+        return uids, scores
+
+    def _build_fallback_uniform_weights(self) -> tuple[list[int], list[float]]:
+        miner_uids = [uid for uid in list(self.ipc_miners_dict.keys()) if uid != self.uid]
+        if not miner_uids:
+            return [], []
+
+        count = len(miner_uids)
+        uniform_weight = 1.0 / count
+        return miner_uids, [uniform_weight] * count
 
     def _set_weights(self, uids: list[int], scores: list[float]):
         logger.info(f"[ChallengeManager] set_weights for uids: {uids}, scores: {scores}")
         scores_np = np.array(scores, dtype=np.float32)
 
-        if np.all(scores_np == 0):
-            logger.warning("[ChallengeManager] All scores are zero, skipping set weight.")
-            return
+        # if np.all(scores_np == 0):
+        #     logger.warning("[ChallengeManager] All scores are zero, skipping set weight.")
+        #     return
         (
             processed_weight_uids,
             processed_weights,

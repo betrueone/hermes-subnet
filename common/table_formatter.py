@@ -2,6 +2,7 @@ from rich.console import Console
 from rich.box import ROUNDED
 from rich.table import Table
 from loguru import logger
+import bittensor as bt
 from common.enums import ErrorCode
 from common.protocol import OrganicNonStreamSynapse
 
@@ -131,15 +132,29 @@ class TableFormatter:
         round_id: str,
         challenge_id: str,
         uids: list[int],
-        responses: list[any],
+        hotkeys: list[str],
+        responses: list[bt.Synapse],
         ground_truth_scores: list[float],
         elapse_weights: list[float],
         zip_scores: list[float],
         cid: str,
+        max_table_rows: int
     ):
         header = "🤖 Synthetic Challenge" + f" ({round_id} | {challenge_id})"
         rows = []
-        for idx, uid in enumerate(uids):
+
+        # Separate serving and failed responses
+        serving_indices = []
+        failed_indices = []
+        for idx, r in enumerate(responses):
+            (serving_indices if hotkeys[idx] else failed_indices).append(idx)
+
+        # Prioritize successful responses
+        prioritized_indices = serving_indices + failed_indices
+        limited_indices = prioritized_indices[:max_table_rows] if max_table_rows > 0 else prioritized_indices
+        
+        for idx in limited_indices:
+            uid = uids[idx]
             r = responses[idx]
             rstr = None
             if r.is_success:
@@ -159,9 +174,14 @@ class TableFormatter:
                 f"{elapse_weights[idx]}",
                 f"{zip_scores[idx]}",
             ])
+
+        caption = f"cid: {cid}"
+        if max_table_rows > 0 and len(uids) > max_table_rows:
+            caption += f" (showing first {max_table_rows} of {len(uids)} miners)"
+    
         miners_response_output = self.create_multiple_column_table(
             title=f"{header} - Miners Response",
-            caption=f"cid: {cid}",
+            caption=caption,
             columns=[
                 "UID",
                 "Response",
@@ -183,21 +203,38 @@ class TableFormatter:
         workload_counts: list[int],
         quality_scores: list[list[float]],
         workload_score: list[float],
-        new_ema_scores: dict[int, tuple[float, str]]
+        new_ema_scores: dict[int, tuple[float, str]],
+        max_table_rows: int
+
     ):
         header = "🤖 Synthetic Challenge" + f" ({round_id} | {challenge_id})"
         rows = []
-        for idx, uid in enumerate(uids):
+
+        data = list(zip(uids, hotkeys, workload_counts, quality_scores, workload_score))
+
+        # Sort by new_ema_scores[uid][0] in descending order
+        sorted_data = sorted(data, key=lambda x: new_ema_scores[x[0]][0], reverse=True)
+        
+        # Limit to max_table_rows if specified
+        limited_data = sorted_data[:max_table_rows] if max_table_rows > 0 else sorted_data
+
+        for uid, hotkey, workload_count, quality_score, workload_s in limited_data:
             rows.append([
                 f"{uid}",
-                f"{hotkeys[idx]}",
-                f"{workload_counts[idx]}",
-                f"{', '.join(map(str, quality_scores[idx]))}",
-                f"{workload_score[idx]}",
+                f"{hotkey}",
+                f"{workload_count}",
+                f"{', '.join(map(str, quality_score))}",
+                f"{workload_s}",
                 f"{new_ema_scores[uid][0]}"
             ])
+
+        caption = f""
+        if max_table_rows > 0 and len(uids) > max_table_rows:
+            caption += f" (showing top {max_table_rows} of {len(uids)} miners by EMA score)"
+
         miners_response_output = table_formatter.create_multiple_column_table(
             title=f"{header} - Miners Final Score",
+            caption=caption,
             columns=[
                 "UID",
                 "Hotkey",

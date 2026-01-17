@@ -47,7 +47,7 @@ class ScorerManager:
         elapse_weights = [utils.fix_float(utils.get_elapse_weight_quadratic(r.elapsed_time, ground_cost, min_latency_improvement_ratio)) for r in miner_synapses]
         zip_scores = [utils.fix_float(s * w) for s, w in zip(ground_truth_scores, elapse_weights)]
 
-        logger.info(f"[ScorerManager] - {challenge_id} ground_truth_scores: {ground_truth_scores_raw}, elapse_time: {elapse_time}, elapse_weights: {elapse_weights}, zip_scores: {zip_scores}")
+        logger.debug(f"[ScorerManager] - {challenge_id} ground_truth_scores: {ground_truth_scores_raw}, elapse_time: {elapse_time}, elapse_weights: {elapse_weights}, zip_scores: {zip_scores}")
         return zip_scores, ground_truth_scores, elapse_weights, elapse_time
 
     async def cal_ground_truth_score(
@@ -59,7 +59,7 @@ class ScorerManager:
             round_id: int = 0
         ):
         if not miner_synapse.response or miner_synapse.status_code != 200:
-            logger.warning(f"[ScorerManager] - cal_ground_truth_score: empty or error response from miner_synapse, status_code: {miner_synapse.status_code}, response: {miner_synapse.response}")
+            logger.debug(f"[ScorerManager] - cal_ground_truth_score: empty or error response from miner_synapse, status_code: {miner_synapse.status_code}, response: {miner_synapse.response}")
             return 0.0
         
         # SECURITY: Sanitize miner response to detect/log prompt injection attempts
@@ -86,7 +86,7 @@ class ScorerManager:
         workload_score: List[float] | None,
         challenge_id: str = ""
     ):
-        logger.info(f"[ScorerManager] - {challenge_id} update_scores called with uids: {uids}, hotkeys: {hotkeys}, project_score_matrix: {project_score_matrix}, workload_score: {workload_score}")
+        logger.debug(f"[ScorerManager] - {challenge_id} update_scores called with uids: {uids}, hotkeys: {hotkeys}, project_score_matrix: {project_score_matrix}, workload_score: {workload_score}")
         if not uids or not project_score_matrix:
             return
 
@@ -103,7 +103,7 @@ class ScorerManager:
         
         new_scores = self.overall_ema.update(uids, hotkeys, score_matrix.tolist())
         self.save_state(new_scores)
-        logger.info(f"[ScorerManager] - {challenge_id} uids: {uids}, project_score_matrix: {project_score_matrix}, workload_score: {workload_score}, merged: {merged}, score_matrix: {score_matrix.tolist()}, updated_ema_scores: {new_scores}")
+        logger.debug(f"[ScorerManager] - {challenge_id} uids: {uids}, project_score_matrix: {project_score_matrix}, workload_score: {workload_score}, merged: {merged}, score_matrix: {score_matrix.tolist()}, updated_ema_scores: {new_scores}")
         return new_scores
 
 
