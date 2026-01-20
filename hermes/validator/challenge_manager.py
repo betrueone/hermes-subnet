@@ -720,8 +720,8 @@ class ChallengeManager:
             return [], []
 
         count = len(miner_uids)
-        uniform_weight = 1.0 / count
-        return miner_uids, [uniform_weight] * count
+        # uniform_weight = 1.0 / count
+        return miner_uids, [0] * count
 
     def _set_weights(self, uids: list[int], scores: list[float]):
         logger.info(f"[ChallengeManager] set_weights for uids: {uids}, scores: {scores}")
