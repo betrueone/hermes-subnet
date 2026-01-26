@@ -11,7 +11,7 @@ import torch
 from agent.stats import Phase, TokenUsageMetrics
 from common import utils
 from common.enums import ErrorCode
-from common.prompt_template import SCORE_PROMPT
+from common.prompt_template import SCORE_PROMPT, create_scoring_json
 from common.prompt_injection_defense import sanitize_for_evaluation
 from common.protocol import SyntheticNonStreamSynapse
 from hermes.validator.ema import EMAUpdater
@@ -74,10 +74,10 @@ class ScorerManager:
         # SECURITY: Sanitize miner response to detect/log prompt injection attempts
         # sanitized_response = sanitize_for_evaluation(miner_synapse.response, max_length=5000)
         
-        question_prompt = SCORE_PROMPT.format(
-            ground_truth=ground_truth, 
-            miner_answer=miner_synapse.response  # Use sanitized response
-        )
+        json_data = create_scoring_json(ground_truth, miner_synapse.response)
+        
+        # Directly insert JSON data into the template to avoid format() conflicts with JSON braces
+        question_prompt = SCORE_PROMPT.template.replace("{json_data}", json_data)
         try :
             summary_response = await self.llm_score.ainvoke([HumanMessage(content=question_prompt)])
             if token_usage_metrics is not None:
