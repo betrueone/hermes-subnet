@@ -105,6 +105,10 @@ class Settings:
     @property
     def env_file(self) -> str | None:
         return self._env_file
+    
+    @property
+    def burn_uid(self) -> int:
+        return int(os.environ.get("BURN_UID", 0))
 
     def miners(self) -> Tuple[List[int], List[str]]:
         uids = []

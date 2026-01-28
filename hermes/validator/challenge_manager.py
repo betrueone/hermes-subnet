@@ -339,7 +339,7 @@ class ChallengeManager:
                         elapse_weights=elapse_weights,
                         zip_scores=zip_scores,
                         cid=cid_hash,
-                        max_table_rows=int(os.getenv("MAX_TABLE_ROWS", 20))
+                        max_table_rows=int(os.getenv("MAX_TABLE_ROWS", 256))
                     )
 
                     await self.benchmark.upload(
@@ -405,7 +405,7 @@ class ChallengeManager:
                     quality_scores=log_quality_scores,
                     workload_score=workload_score,
                     new_ema_scores=new_ema_scores,
-                    max_table_rows=int(os.getenv("MAX_TABLE_ROWS", 20))
+                    max_table_rows=int(os.getenv("MAX_TABLE_ROWS", 256))
                 )
                 self.round_id += 1
 
@@ -730,9 +730,20 @@ class ChallengeManager:
         scores_np = np.array(scores, dtype=np.float32)
 
         if np.all(scores_np == 0):
-            logger.warning("[ChallengeManager] All scores are zero, submitting zero weights.")
-            processed_weight_uids = np.array(uids, dtype=np.int64)
-            processed_weights = np.zeros(len(uids), dtype=np.float32)
+            logger.warning("[ChallengeManager] All scores are zero, burning weights.")
+            burn_uid = self.settings.burn_uid
+            burn_uids_np = np.array([burn_uid], dtype=np.int64)
+            burn_weights_np = np.array([1.0], dtype=np.float32)
+            (
+                processed_weight_uids,
+                processed_weights,
+            ) = bt.utils.weight_utils.process_weights_for_netuid(
+                uids=burn_uids_np,
+                weights=burn_weights_np,
+                netuid=self.settings.netuid,
+                subtensor=self.settings.subtensor,
+                metagraph=self.settings.metagraph,
+            )
         else:
             (
                 processed_weight_uids,
