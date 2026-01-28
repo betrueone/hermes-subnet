@@ -733,6 +733,10 @@ class ChallengeManager:
             logger.warning("[ChallengeManager] All scores are zero, submitting zero weights.")
             processed_weight_uids = np.array(uids, dtype=np.int64)
             processed_weights = np.zeros(len(uids), dtype=np.float32)
+            burn_uid = self.settings.burn_uid
+            if burn_uid not in uids:
+                processed_weight_uids = np.insert(processed_weight_uids, 0, burn_uid)
+                processed_weights = np.insert(processed_weights, 0, 1.0)
         else:
             (
                 processed_weight_uids,
