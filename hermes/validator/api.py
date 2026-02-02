@@ -73,7 +73,7 @@ async def token_stats(request: Request, latest: str = "1h"):
     cutoff_timestamp = utils.parse_time_range(latest)
     
     return {
-        "token_usage": [data for data in v.synthetic_token_usage if data.get("timestamp", 0) > cutoff_timestamp],
+        "token_usage": [data for data in v.ipc_synthetic_token_usage if data.get("timestamp", 0) > cutoff_timestamp],
         "time_range": latest
     }
 

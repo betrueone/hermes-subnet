@@ -275,6 +275,7 @@ class WorkloadManager:
                         await self.benchmark.upload(
                             uid=self.V.uid,
                             address=self.V.settings.wallet.hotkey.ss58_address,
+                            version=self.V.settings.version,
                             cid=response.cid_hash.split('_')[0],
                             challenge_id=response.id,
                             challenge_type=ChallengeType.ORGANIC_STREAM.value,

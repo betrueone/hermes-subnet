@@ -82,7 +82,7 @@ class Validator(BaseNeuron):
             organic_score_queue: list,
             ipc_synthetic_score: list,
             ipc_miners_dict: dict,
-            synthetic_token_usage: list,
+            ipc_synthetic_token_usage: list,
             ipc_meta_config: dict,
             ipc_common_config: dict,
             event_stop: Event,
@@ -95,7 +95,7 @@ class Validator(BaseNeuron):
             organic_score_queue=organic_score_queue,
             ipc_synthetic_score=ipc_synthetic_score,
             ipc_miners_dict=ipc_miners_dict,
-            synthetic_token_usage=synthetic_token_usage,
+            ipc_synthetic_token_usage=ipc_synthetic_token_usage,
             ipc_meta_config=ipc_meta_config,
             ipc_common_config=ipc_common_config,
             event_stop=event_stop,
@@ -115,7 +115,7 @@ class Validator(BaseNeuron):
             organic_score_queue: list,
             ipc_miners_dict: dict[int, dict],
             ipc_synthetic_score: list,
-            synthetic_token_usage: list,
+            ipc_synthetic_token_usage: list,
             ipc_common_config: dict,
             ipc_meta_config: dict,
             event_stop: Event
@@ -124,7 +124,7 @@ class Validator(BaseNeuron):
         self.organic_score_queue = organic_score_queue
         self.ipc_miners_dict = ipc_miners_dict
         self.ipc_synthetic_score = ipc_synthetic_score
-        self.synthetic_token_usage = synthetic_token_usage
+        self.ipc_synthetic_token_usage = ipc_synthetic_token_usage
         self.uid_select_count = defaultdict(int)
         self.ipc_common_config = ipc_common_config
         self.ipc_meta_config = ipc_meta_config
@@ -169,8 +169,10 @@ class Validator(BaseNeuron):
         ) -> dict[str, any]:
             try:
                 synapse = CapacitySynapse()
+                axon: bt.AxonInfo = metagraph.axons[uid]
+                ip = axon.ip
                 r = await dendrite.forward(
-                    axons=metagraph.axons[uid],
+                    axons=axon,
                     synapse=synapse,
                     deserialize=True,
                     timeout=30,
@@ -180,7 +182,8 @@ class Validator(BaseNeuron):
                     return {
                         "uid": uid,
                         "projects": r.response.get("capacity", {}).get("projects", []),
-                        "hotkey": r.axon.hotkey
+                        "hotkey": r.axon.hotkey,
+                        "ip": ip
                     }
                 else:
                     logger.debug(f"UID {uid} request failed.")
@@ -190,7 +193,8 @@ class Validator(BaseNeuron):
             return {
                 "uid": uid,
                 "projects": [],
-                "hotkey": ""
+                "hotkey": "",
+                "ip": ip
             }
 
         while not event_stop.is_set():
@@ -220,8 +224,10 @@ class Validator(BaseNeuron):
                 for r in responses:
                     ipc_miners_dict[r["uid"]] = {
                         "hotkey": r["hotkey"],
-                        "projects": r["projects"]
+                        "projects": r["projects"],
+                        "ip": r["ip"]
                     }
+                logger.debug(f"[CheckMiner] Updated miners: {ipc_miners_dict}")
 
             except Exception as e:
                 logger.error(f"Error in miner checking: {e}")
@@ -387,7 +393,7 @@ def run_challenge(
         organic_score_queue: list,
         ipc_synthetic_score: list,
         ipc_miners_dict: dict,
-        synthetic_token_usage: list,
+        ipc_synthetic_token_usage: list,
         ipc_meta_config: dict,
         ipc_common_config: dict,
         event_stop: Event
@@ -404,7 +410,7 @@ def run_challenge(
             organic_score_queue,
             ipc_synthetic_score,
             ipc_miners_dict,
-            synthetic_token_usage,
+            ipc_synthetic_token_usage,
             ipc_meta_config,
             ipc_common_config,
             event_stop
@@ -419,7 +425,7 @@ def run_api(
         organic_score_queue: list,
         ipc_miners_dict: dict,
         ipc_synthetic_score: list,
-        synthetic_token_usage: list,
+        ipc_synthetic_token_usage: list,
         ipc_meta_config: dict,
         ipc_common_config: dict,
         event_stop: Event
@@ -436,7 +442,7 @@ def run_api(
             organic_score_queue,
             ipc_miners_dict,
             ipc_synthetic_score,
-            synthetic_token_usage,
+            ipc_synthetic_token_usage,
             ipc_common_config=ipc_common_config,
             ipc_meta_config=ipc_meta_config,
             event_stop=event_stop
@@ -469,7 +475,7 @@ async def main():
             organic_score_queue = manager.list([])
             ipc_miners_dict = manager.dict({})
             ipc_synthetic_score = manager.list([{}, {}])
-            synthetic_token_usage = manager.list([])
+            ipc_synthetic_token_usage = manager.list([])
             ipc_meta_config = manager.dict({})
             ipc_common_config = manager.dict({})
 
@@ -482,7 +488,7 @@ async def main():
                     organic_score_queue,
                     ipc_synthetic_score,
                     ipc_miners_dict,
-                    synthetic_token_usage,
+                    ipc_synthetic_token_usage,
                     ipc_meta_config,
                     ipc_common_config,
                     event_stop
@@ -499,7 +505,7 @@ async def main():
                     organic_score_queue,
                     ipc_miners_dict,
                     ipc_synthetic_score,
-                    synthetic_token_usage,
+                    ipc_synthetic_token_usage,
                     ipc_meta_config,
                     ipc_common_config,
                     event_stop

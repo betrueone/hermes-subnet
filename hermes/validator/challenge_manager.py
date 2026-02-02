@@ -74,7 +74,7 @@ class ChallengeManager:
         ipc_meta_config: dict = None,
         ipc_common_config: dict = None,
         event_stop: Event = None,
-        synthetic_token_usage: list = None,
+        ipc_synthetic_token_usage: list = None,
         score_state_path: str | Path = None,
         work_state_path: str | Path = None,
         v: "Validator" = None,
@@ -91,7 +91,7 @@ class ChallengeManager:
         self.uid = uid
         self.round_id = 1
         self.dendrite = dendrite
-        self.token_usage_metrics = TokenUsageMetrics(datas=synthetic_token_usage)
+        self.token_usage_metrics = TokenUsageMetrics(datas=ipc_synthetic_token_usage)
         self.benchmark = BenchMark(self.settings.wallet, ipc_meta_config)
 
         synthetic_model_name = synthetic_model_name or os.getenv("LLM_MODEL", "google/gemini-3-flash-preview")
@@ -198,18 +198,21 @@ class ChallengeManager:
                     challenge_interval = 30
                     continue
 
-                miner_uids = []
-                miner_hotkeys = []
-                for uid, miner_info in self.ipc_miners_dict.items():
-                    miner_uids.append(uid)
-                    miner_hotkeys.append(miner_info["hotkey"])
-
+                # Sort miners by UID (from small to large)
+                sorted_miners = sorted(self.ipc_miners_dict.items(), key=lambda x: x[0])
+                
                 uids = []
                 hotkeys = []
-                for idx, u in enumerate(miner_uids):
-                    if u != self.uid:
-                        uids.append(u)
-                        hotkeys.append(miner_hotkeys[idx])
+                ips = []
+                seen_ips = {}  # ip -> first uid that used it
+                for uid, miner_info in sorted_miners:
+                    if uid != self.uid:
+                        uids.append(uid)
+                        hotkeys.append(miner_info["hotkey"])
+                        ip = miner_info.get("ip")
+                        ips.append(ip)
+                        if ip and ip not in seen_ips:
+                            seen_ips[ip] = uid
 
                 skip_query_miner = os.getenv("SKIP_QUERY_MINER", "false").lower() == "true"
 
@@ -233,8 +236,8 @@ class ChallengeManager:
                     max_retries = int(os.getenv("CHALLENGE_GENERATION_MAX_RETRIES", 3))
                     challenge_generated = False
                     error_msgs = []
-                    weight_a = self.ipc_meta_config.get("weight_a", 60)
-                    weight_b = self.ipc_meta_config.get("weight_b", 40)
+                    weight_a = self.ipc_meta_config.get("weight_a", 70)
+                    weight_b = self.ipc_meta_config.get("weight_b", 30)
 
                     for attempt in range(max_retries):
                         challenge_id = str(uuid4())
@@ -321,8 +324,8 @@ class ChallengeManager:
                     # Use semaphore to limit concurrent requests
                     max_concurrent_requests = int(os.getenv("MAX_CONCURRENT_MINER_REQUESTS", 20))
                     semaphore = asyncio.Semaphore(max_concurrent_requests)
-                    
-                    async def query_with_semaphore(uid, hotkey):
+
+                    async def query_with_semaphore(uid, hotkey, ip):
                         async with semaphore:
                             return await self.query_miner(
                                 uid=uid,
@@ -330,14 +333,16 @@ class ChallengeManager:
                                 cid_hash=cid_hash,
                                 challenge_id=challenge_id,
                                 question=question,
-                                block_height=block_cache[cid_hash]
+                                block_height=block_cache[cid_hash],
+                                is_ip_duplicated=bool(ip) and seen_ips.get(ip) != uid
                             )
                     
                     responses = await asyncio.gather(
-                        *(query_with_semaphore(uid, hotkey) for uid, hotkey in zip(uids, hotkeys))
+                        *(query_with_semaphore(uid, hotkey, ip) for uid, hotkey, ip in zip(uids, hotkeys, ips))
                     )
 
                     logger.info(f"[ChallengeManager] - {challenge_id} query miners done")
+                    self.token_usage_metrics.append(metrics_data)
 
                     # score result
                     zip_scores, ground_truth_scores, elapse_weights, miners_elapse_time = await self.scorer_manager.compute_challenge_score(
@@ -376,6 +381,7 @@ class ChallengeManager:
                     await self.benchmark.upload(
                         uid=self.V.uid,
                         address=self.settings.wallet.hotkey.ss58_address,
+                        version=self.settings.version,
                         cid=cid_hash.split('_')[0],
                         challenge_type=ChallengeType.SYNTHETIC.value,
                         challenge_id=challenge_id,
@@ -488,8 +494,7 @@ class ChallengeManager:
             result = response.get('messages', [])[-1].content
 
             if token_usage_metrics is not None:
-                metrics_data = token_usage_metrics.append(cid_hash, phase=Phase.GENERATE_GROUND_TRUTH, response=response, extra = {"round_id": round_id})
-
+                metrics_data = token_usage_metrics.parse(cid_hash, phase=Phase.GENERATE_GROUND_TRUTH, response=response, extra={"round_id": round_id})
             if not result:
                 error = utils.try_get_invalid_tool_messages(response.get('messages', []))
                 raise RuntimeError(f"[ChallengeManager] - {cid_hash} Failed to generate ground truth. {error}")
@@ -523,6 +528,7 @@ class ChallengeManager:
         challenge_id: str,
         question: str,
         block_height: int = 0,
+        is_ip_duplicated: bool = False,
     ):
         synapse = SyntheticNonStreamSynapse(id=challenge_id, uid=uid, cid_hash=cid_hash, question=question, block_height=block_height)
         start_time = time.perf_counter()
@@ -537,6 +543,10 @@ class ChallengeManager:
                 r.dendrite = bt.TerminalInfo(status_code=200)
                 r.status_code = ErrorCode.NOT_HEALTHY.value
                 r.error = "Miner is not healthy"
+            elif is_ip_duplicated:
+                r.dendrite = bt.TerminalInfo(status_code=200)
+                r.status_code = ErrorCode.DUPLICATED_IP.value
+                r.error = "Miner has duplicated IP"
             else:
                 r: SyntheticNonStreamSynapse = await self.dendrite.forward(
                     axons=self.settings.metagraph.axons[uid],

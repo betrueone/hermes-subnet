@@ -75,6 +75,7 @@ class BenchMark:
         self,
         uid: int,
         address: str,
+        version: str,
         cid: str,
         challenge_type: int,
         challenge_id: str,
@@ -108,6 +109,7 @@ class BenchMark:
         benchmark_data = {
             "uid": uid,
             "address": address,
+            "version": version,
             "cid": cid,
             "challengeType": challenge_type,
             "challengeId": challenge_id,

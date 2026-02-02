@@ -104,7 +104,7 @@ class TokenUsageMetrics:
         self.datas = datas if datas is not None else []
         self.count = 0
 
-    def append(
+    def parse(
             self,
             cid_hash: str,
             phase: Phase,
@@ -137,6 +137,14 @@ class TokenUsageMetrics:
             "timestamp":  int(datetime.now().timestamp())
         }
         data.update(extra)
+        return data
+
+    def append(
+            self,
+            data: dict[str, any]
+        ) -> dict[str, any]:
+        if data is None:
+            return None
         
         self.datas.append(data)
         self.count += 1

@@ -285,8 +285,9 @@ class Miner(BaseNeuron):
         r: dict
     ) -> tuple[str | None, dict, list, list[str], str | None, str | None, ErrorCode]:
         # logger.info(f"[{tag}] - {task.id} Agent response: {r}")
-
-        usage_info = self.token_usage_metrics.append(task.cid_hash, phase, r)
+        
+        usage_info = self.token_usage_metrics.parse(task.cid_hash, phase, r)
+        self.token_usage_metrics.append(usage_info)
 
         # check tool stats
         tool_hit = utils.try_get_tool_hit(

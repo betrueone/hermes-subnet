@@ -41,8 +41,8 @@ class QuestionGenerator:
             llm: ChatOpenAI,
             token_usage_metrics: TokenUsageMetrics | None = None,
             round_id: int = 0,
-            weight_a: int = 60,
-            weight_b: int = 40,
+            weight_a: int = 70,
+            weight_b: int = 30,
         ) -> tuple[str, str | None]:
         if not project.schema_content:
             return "", "schema not found"
@@ -72,7 +72,7 @@ class QuestionGenerator:
                 temp_executor = create_react_agent(
                     model=llm,
                     tools=tools,
-                    prompt="",
+                    prompt=None,
                 )
                 response = await temp_executor.ainvoke(
                     { "messages": [{"role": "user", "content": prompt}] },
@@ -82,7 +82,10 @@ class QuestionGenerator:
                 )
                 question = response.get('messages', [])[-1].content
                 if token_usage_metrics is not None:
-                    token_usage_metrics.append(cid_hash, phase=Phase.GENERATE_QUESTION, response=response, extra={"round_id": round_id})
+                    d = token_usage_metrics.parse(
+                        cid_hash, phase=Phase.GENERATE_QUESTION, response=response, extra={"round_id": round_id}
+                    )
+                    token_usage_metrics.append(d)
                 return question, None
 
             except Exception as e:
@@ -95,7 +98,10 @@ class QuestionGenerator:
                 response = await llm.ainvoke([HumanMessage(content=prompt)])
                 question = response.content.strip()
                 if token_usage_metrics is not None:
-                    token_usage_metrics.append(cid_hash, phase=Phase.GENERATE_QUESTION, response=response, extra = {"round_id": round_id})
+                    d = token_usage_metrics.parse(
+                        cid_hash, phase=Phase.GENERATE_QUESTION, response=response, extra={"round_id": round_id}
+                    )
+                    token_usage_metrics.append(d)
                 
                 return question, None
             except Exception as e:
@@ -106,7 +112,7 @@ class QuestionGenerator:
         if not question:
             question, error = await try_with_fallback()
 
-        if not question:
+        if question:
             self.add_to_history(cid_hash, question)
         
         return question, error

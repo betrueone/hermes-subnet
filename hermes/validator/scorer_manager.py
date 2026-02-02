@@ -81,7 +81,10 @@ class ScorerManager:
         try :
             summary_response = await self.llm_score.ainvoke([HumanMessage(content=question_prompt)])
             if token_usage_metrics is not None:
-                token_usage_metrics.append(cid_hash, phase=Phase.GENERATE_MINER_GROUND_TRUTH_SCORE, response=summary_response, extra = {"round_id": round_id})
+                d = token_usage_metrics.parse(
+                    cid_hash, phase=Phase.GENERATE_MINER_GROUND_TRUTH_SCORE, response=summary_response, extra={"round_id": round_id}
+                )
+                token_usage_metrics.append(d)
 
         except Exception as e:
             logger.error(f"[ScorerManager] - LLM scoring error: {e}")
