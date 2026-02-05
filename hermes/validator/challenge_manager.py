@@ -333,8 +333,7 @@ class ChallengeManager:
                             question=question,
                             block_height=block_cache[cid_hash],
                             is_ip_duplicated=bool(ip) and seen_ips.get(ip) != uid
-                        ) for uid, hotkey, ip in zip(uids, hotkeys, ips)),
-                        return_exceptions=True  # Prevent single failure from breaking all requests
+                        ) for uid, hotkey, ip in zip(uids, hotkeys, ips))
                     )
 
                     logger.info(f"[ChallengeManager] - {challenge_id} query miners done")
@@ -542,6 +541,7 @@ class ChallengeManager:
         r.status_code = ErrorCode.FORWARD_SYNTHETIC_FAILED.value
         r.error = "Unknown error"
 
+        logger.info(f"----- sending query to uid: {uid}--")
         try:
             if not hotkey:
                 r.dendrite = bt.TerminalInfo(status_code=200)
@@ -571,6 +571,8 @@ class ChallengeManager:
         finally:
             r.uid = uid
             r.elapsed_time = utils.fix_float(time.perf_counter() - start_time)
+            logger.info(f"----- done query to uid: {uid}--{r.elapsed_time}")
+
             return r
 
     async def set_weight(self):
