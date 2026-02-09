@@ -2,9 +2,10 @@ import aiohttp
 import bittensor as bt
 
 class HighConcurrencyDendrite(bt.dendrite):
-    def __init__(self, wallet: bt.Wallet=None, max_connections=500):
+    def __init__(self, wallet: bt.Wallet=None, max_connections=500, total_timeout=300):
         super().__init__(wallet)
         self.max_connections = max_connections
+        self.total_timeout = total_timeout  
         self._custom_session = None
     
     @property
@@ -20,7 +21,7 @@ class HighConcurrencyDendrite(bt.dendrite):
             )
             self._custom_session = aiohttp.ClientSession(
                 connector=connector,
-                timeout=aiohttp.ClientTimeout(total=None)
+                timeout=aiohttp.ClientTimeout(total=self.total_timeout)
             )
         return self._custom_session
     
