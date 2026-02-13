@@ -3,7 +3,6 @@ import os
 from pathlib import Path
 import random
 import time
-import json
 import traceback
 from dataclasses import dataclass
 from typing import Tuple, TYPE_CHECKING, Optional
@@ -20,7 +19,7 @@ if TYPE_CHECKING:
     from neurons.validator import Validator
 from agent.stats import Phase, TokenUsageMetrics
 from common.agent_manager import AgentManager
-from common.enums import ChallengeType, ErrorCode
+from common.enums import ChallengeType, ErrorCode, FailureType
 from common.protocol import SyntheticNonStreamSynapse
 from common.settings import Settings
 from common.table_formatter import table_formatter
@@ -28,6 +27,8 @@ import common.utils as utils
 from hermes.validator.question_generator import question_generator
 from hermes.validator.scorer_manager import ScorerManager
 from hermes.validator.workload_manager import WorkloadManager
+from hermes.validator.dendrite import HighConcurrencyDendrite
+from hermes.validator.multiprocess_query import query_miners_multiprocess
 
 
 @dataclass
@@ -46,7 +47,7 @@ class ChallengeManager:
     uid: int
     round_id: int
     challenge_interval: int
-    dendrite: bt.Dendrite
+    dendrite: HighConcurrencyDendrite
     llm_synthetic: ChatOpenAI
     llm_score: ChatOpenAI
     agent_manager: AgentManager
@@ -65,7 +66,7 @@ class ChallengeManager:
         settings: Settings, 
         save_project_dir: str | Path, 
         uid: int, 
-        dendrite: bt.Dendrite,
+        dendrite: HighConcurrencyDendrite,
         organic_score_queue: list,
         ipc_synthetic_score: list,
         ipc_miners_dict: dict,
@@ -74,7 +75,7 @@ class ChallengeManager:
         ipc_meta_config: dict = None,
         ipc_common_config: dict = None,
         event_stop: Event = None,
-        synthetic_token_usage: list = None,
+        ipc_synthetic_token_usage: list = None,
         score_state_path: str | Path = None,
         work_state_path: str | Path = None,
         v: "Validator" = None,
@@ -91,7 +92,7 @@ class ChallengeManager:
         self.uid = uid
         self.round_id = 1
         self.dendrite = dendrite
-        self.token_usage_metrics = TokenUsageMetrics(datas=synthetic_token_usage)
+        self.token_usage_metrics = TokenUsageMetrics(datas=ipc_synthetic_token_usage)
         self.benchmark = BenchMark(self.settings.wallet, ipc_meta_config)
 
         synthetic_model_name = synthetic_model_name or os.getenv("LLM_MODEL", "google/gemini-3-flash-preview")
@@ -101,9 +102,18 @@ class ChallengeManager:
         )
 
         score_model_name = score_model_name or os.getenv("SCORE_LLM_MODEL", "google/gemini-3-flash-preview")
+        score_model_base_url = os.getenv("SCORE_LLM_MODEL_BASE_URL", None)
+        score_model_api_key = os.getenv("SCORE_LLM_MODEL_API_KEY", None)
+        score_model_args = {}
+        if score_model_base_url:
+            score_model_args["base_url"] = score_model_base_url
+        if score_model_api_key:
+            score_model_args["api_key"] = score_model_api_key
+
         self.llm_score = ChatOpenAI(
             model=score_model_name,
-            temperature=0
+            temperature=0,
+            **score_model_args
         )
 
         self.agent_manager = AgentManager(
@@ -160,6 +170,12 @@ class ChallengeManager:
 
             # pull projects & init agents
             await self.agent_manager.start(mode == "pull", role="validator")
+            await self.benchmark.upload_os_info(
+                uid=self.uid,
+                address=self.settings.wallet.hotkey.ss58_address,
+                version=self.settings.version,
+                cpu_count=self.settings.cpu_count
+            )
 
             self.task = [
                 asyncio.create_task(self.workload_manager.compute_organic_task()),
@@ -187,33 +203,41 @@ class ChallengeManager:
         try:
             block_cache: dict[str, int] = {}
             miners_counter: dict[int, tuple[int, int]] = {}  # uid -> [success_count, total_count]
+            challenge_interval = self.challenge_interval
+
             while not self.event_stop.is_set():
-                await asyncio.sleep(self.challenge_interval)
+                await asyncio.sleep(challenge_interval)
 
                 projects = self.agent_manager.get_projects()
                 if not projects:
                     logger.warning("[ChallengeManager] No projects found, skipping this round.")
-                    await asyncio.sleep(self.challenge_interval)
+                    challenge_interval = 30
                     continue
 
-                miner_uids = []
-                miner_hotkeys = []
-                for uid, miner_info in self.ipc_miners_dict.items():
-                    miner_uids.append(uid)
-                    miner_hotkeys.append(miner_info["hotkey"])
-
+                # Randomly shuffle miners
+                miners_list = list(self.ipc_miners_dict.items())
+                random.shuffle(miners_list)
+                
                 uids = []
                 hotkeys = []
-                for idx, u in enumerate(miner_uids):
-                    if u != self.uid:
-                        uids.append(u)
-                        hotkeys.append(miner_hotkeys[idx])
+                ips = []
+                axons: list[str] = []
+                seen_ips = {}  # ip -> first uid that used it
+                for uid, miner_info in miners_list:
+                    if uid != self.uid:
+                        uids.append(uid)
+                        hotkeys.append(miner_info["hotkey"])
+                        axons.append(miner_info["axon"])
+                        ip = miner_info.get("ip")
+                        ips.append(ip)
+                        if ip and ip not in seen_ips:
+                            seen_ips[ip] = uid
 
                 skip_query_miner = os.getenv("SKIP_QUERY_MINER", "false").lower() == "true"
 
                 if not skip_query_miner and not uids:
                     logger.warning("[ChallengeManager] No available miners for challenge, skipping this round.")
-                    await asyncio.sleep(self.challenge_interval)
+                    challenge_interval = 30
                     continue
 
                 project_score_matrix = []
@@ -230,26 +254,34 @@ class ChallengeManager:
                     # Retry loop: attempt to generate a valid challenge for this project
                     max_retries = int(os.getenv("CHALLENGE_GENERATION_MAX_RETRIES", 3))
                     challenge_generated = False
+                    error_msgs = []
+                    weight_a = self.ipc_meta_config.get("weight_a", 70)
+                    weight_b = self.ipc_meta_config.get("weight_b", 30)
 
                     for attempt in range(max_retries):
                         challenge_id = str(uuid4())
 
                         # generate challenge
-                        question = await question_generator.generate_question(
+                        question, error = await question_generator.generate_question(
                             cid_hash, 
-                            project_config.schema_content, 
+                            project_config,
                             self.llm_synthetic,
                             self.token_usage_metrics,
-                            round_id=self.round_id
+                            round_id=self.round_id,
+                            weight_a=weight_a,    # normal
+                            weight_b=weight_b     # tool
                         )
+
                         if not question:
                             logger.warning(f"[ChallengeManager] - {cid_hash} Failed to generate question (attempt {attempt + 1}/{max_retries})")
+                            error_msgs.append(f"(round: {self.round_id}, attempt: {attempt + 1}/{max_retries}, {cid_hash}) {error}")
                             continue
 
                         # get latest block
                         latest_block = await utils.get_latest_block(project_config.endpoint, project_config.node_type)
                         if latest_block is None and block_cache.get(cid_hash, None) is None:
                             logger.warning(f"[ChallengeManager] - {cid_hash} Failed to get latest block (attempt {attempt + 1}/{max_retries})")
+                            error_msgs.append(f"(round: {self.round_id}, attempt: {attempt + 1}/{max_retries}, {cid_hash}) Failed to get latest block.")
                             continue
                         
                         if latest_block is not None:
@@ -282,6 +314,7 @@ class ChallengeManager:
 
                         if not is_valid:
                             logger.warning(f"[ChallengeManager] - {challenge_id} Invalid ground truth (attempt {attempt + 1}/{max_retries}): {ground_truth}")
+                            error_msgs.append(f"(round: {self.round_id}, attempt: {attempt + 1}/{max_retries}, {cid_hash}) Invalid ground truth: {ground_truth}")
                             continue
 
                         # Valid challenge generated, break retry loop
@@ -290,32 +323,39 @@ class ChallengeManager:
                     # Skip this project if all retries failed
                     if not challenge_generated:
                         logger.error(f"[ChallengeManager] - {cid_hash} Failed to generate valid challenge after {max_retries} attempts, skipping project")
+                        await self.benchmark.add_failure(
+                            uid= self.uid,
+                            round_id= self.round_id,
+                            address= self.settings.wallet.hotkey.ss58_address,
+                            version= self.settings.version,
+                            failure_type= FailureType.GENERATE_CHALLENGE.value,
+                            cid_hash= cid_hash,
+                            error_msgs= error_msgs
+                        )
                         continue
 
                     if skip_query_miner:
                         continue
 
-                    # query all miner with concurrency control
+                    # query all miner
                     logger.info(f"[ChallengeManager] - {challenge_id} query miners: {uids}")
-                    
-                    # Use semaphore to limit concurrent requests
-                    max_concurrent_requests = int(os.getenv("MAX_CONCURRENT_MINER_REQUESTS", 20))
-                    semaphore = asyncio.Semaphore(max_concurrent_requests)
-                    
-                    async def query_with_semaphore(uid, hotkey):
-                        async with semaphore:
-                            return await self.query_miner(
-                                uid=uid,
-                                hotkey=hotkey,
-                                cid_hash=cid_hash,
-                                challenge_id=challenge_id,
-                                question=question,
-                                block_height=block_cache[cid_hash]
-                            )
-                    
-                    responses = await asyncio.gather(
-                        *(query_with_semaphore(uid, hotkey) for uid, hotkey in zip(uids, hotkeys))
+
+                    responses = await query_miners_multiprocess(
+                        uids=uids,
+                        hotkeys=hotkeys,
+                        axons=axons,
+                        ips=ips,
+                        seen_ips=seen_ips,
+                        cid_hash=cid_hash,
+                        challenge_id=challenge_id,
+                        question=question,
+                        block_height=block_cache[cid_hash],
+                        timeout=self.forward_miner_timeout,
+                        settings=self.settings,
                     )
+
+                    logger.info(f"[ChallengeManager] - {challenge_id} query miners done")
+                    self.token_usage_metrics.append(metrics_data)
 
                     # score result
                     zip_scores, ground_truth_scores, elapse_weights, miners_elapse_time = await self.scorer_manager.compute_challenge_score(
@@ -348,12 +388,13 @@ class ChallengeManager:
                         elapse_weights=elapse_weights,
                         zip_scores=zip_scores,
                         cid=cid_hash,
-                        max_table_rows=int(os.getenv("MAX_TABLE_ROWS", 256))
+                        max_table_rows=int(os.getenv("MAX_TABLE_ROWS", 50))
                     )
 
                     await self.benchmark.upload(
                         uid=self.V.uid,
                         address=self.settings.wallet.hotkey.ss58_address,
+                        version=self.settings.version,
                         cid=cid_hash.split('_')[0],
                         challenge_type=ChallengeType.SYNTHETIC.value,
                         challenge_id=challenge_id,
@@ -363,7 +404,9 @@ class ChallengeManager:
                         score_model_name=self.llm_score.model_name,
                         ground_truth=ground_truth[:500] if ground_truth else None,
                         ground_cost=ground_cost,
-                        ground_truth_tools=[json.loads(t) for t in metrics_data.get("tool_calls", [])],
+                        ground_truth_tools=[
+                            parsed for t in metrics_data.get("tool_calls", []) if (parsed := utils.safe_json_loads(t)) is not None
+                        ],
                         ground_input_tokens=metrics_data.get("input_tokens", 0),
                         ground_input_cache_read_tokens=metrics_data.get("input_cache_read_tokens", 0),
                         ground_output_tokens=metrics_data.get("output_tokens", 0),
@@ -382,8 +425,14 @@ class ChallengeManager:
                                 "inputTokens": resp.usage_info.get("input_tokens", 0) if resp.usage_info else 0,
                                 "inputCacheReadTokens": resp.usage_info.get("input_cache_read_tokens", 0) if resp.usage_info else 0,
                                 "outputTokens": resp.usage_info.get("output_tokens", 0) if resp.usage_info else 0,
-                                "toolCalls": [json.loads(t) for t in resp.usage_info.get("tool_calls", [])] if resp.usage_info else [],
-                                "graphqlAgentInnerToolCalls": [json.loads(t) for t in resp.graphql_agent_inner_tool_calls] if resp.graphql_agent_inner_tool_calls else [],
+                                "toolCalls": [
+                                    parsed for t in resp.usage_info.get("tool_calls", []) if (parsed := utils.safe_json_loads(t)) is not None
+                                ] if resp.usage_info else [],
+                                
+                                "graphqlAgentInnerToolCalls": [
+                                    parsed for t in resp.graphql_agent_inner_tool_calls 
+                                    if (parsed := utils.safe_json_loads(t)) is not None
+                                ] if resp.graphql_agent_inner_tool_calls else [],
                             }
                             for uid, hotkey, elapse_time, truth_score, resp in zip(uids, hotkeys, miners_elapse_time, ground_truth_scores, responses)
                             if resp.status_code != ErrorCode.NOT_HEALTHY.value
@@ -392,6 +441,7 @@ class ChallengeManager:
 
                 if not project_score_matrix:
                     logger.warning("[ChallengeManager] No valid project score matrix, skipping this round.")
+                    challenge_interval = 30
                     continue
 
                 workload_score, workload_counts, log_quality_scores = await self.workload_manager.compute_workload_score(uids, hotkeys, challenge_id=challenge_id)
@@ -414,113 +464,17 @@ class ChallengeManager:
                     quality_scores=log_quality_scores,
                     workload_score=workload_score,
                     new_ema_scores=new_ema_scores,
-                    max_table_rows=int(os.getenv("MAX_TABLE_ROWS", 256))
+                    max_table_rows=int(os.getenv("MAX_TABLE_ROWS", 50))
+                )
+                await self.benchmark.upload_ema(
+                    uid=self.uid,
+                    address=self.settings.wallet.hotkey.ss58_address,
+                    version=self.settings.version,
+                    round_id=self.round_id,
+                    new_ema_scores=new_ema_scores,
                 )
                 self.round_id += 1
-
-        except KeyboardInterrupt:
-            logger.info("[ChallengeManager] Challenge loop interrupted by user")
-            raise  # Re-raise to allow graceful shutdown
-        except Exception as e:
-            logger.error(f"[ChallengeManager] Challenge loop error: {e}\n{traceback.format_exc()}")
-            raise
-
-    async def test_ground_truth_token(self):
-        try:
-            # SubQuery
-            questions = [
-                'Which indexer currently has the highest total stake across all their delegations?',
-                'What is the average commission rate (as a percentage) charged by indexers who have updated their rates within the last 10 eras?',
-                'Which deployment has received the highest cumulative consumer boost in net tokens added minus removed?',
-                # 'Which indexer currently has the highest total stake across all their delegations plus self-stake?'
-            ]
-
-            # The Graph
-            questions = [
-                'What  is  the largest  number of liquidity providers any single trading pool currently has?',
-                'How  many  transactions has the exchange processed in total?',
-                'What  was  the exchange\'s total trading volume in USD for the most recent day?',
-                'what is the top trader wallet for token pair usdc/weth and how much it traded? and return the graphql query used'
-            ]
-            
-            projects = self.agent_manager.get_projects()
-
-            block_cache: dict[str, int] = {}
-            for cid_hash, project_config in projects.items():
-                allowed_cid_hashs_str = os.getenv("ALLOWED_PROJECT_CID_HASHS", "").strip()
-                if allowed_cid_hashs_str:
-                    allowed_cid_hashs = allowed_cid_hashs_str.split(",")
-                    if cid_hash not in allowed_cid_hashs:
-                        logger.info(f"[ChallengeManager] - {cid_hash} Skipping project not in allowed list")
-                        continue
-                
-                logger.info(f"start testing: {cid_hash}")
-
-                total_input_tokens = 0
-                total_input_cache_tokens = 0
-                total_output_tokens = 0
-
-                for q in questions:
-                    challenge_id = str(uuid4())
-
-                    # get latest block
-                    latest_block = await utils.get_latest_block(project_config.endpoint, project_config.node_type)
-                    if latest_block is None and block_cache.get(cid_hash, None) is None:
-                        logger.warning(f"[ChallengeManager] - {cid_hash} Failed to get latest block")
-                        continue
-
-                    if latest_block is not None:
-                        block_cache[cid_hash] = latest_block
-            
-                    logger.info(f"[ChallengeManager] - {cid_hash} Selected block height: {block_cache[cid_hash]}")
-
-                    success, ground_truth, ground_cost, metrics_data, model_name = await self.generate_ground_truth(
-                        cid_hash=cid_hash,
-                        question=q,
-                        token_usage_metrics=self.token_usage_metrics,
-                        round_id=self.round_id,
-                        block_height=block_cache[cid_hash]
-                    )
-                    is_valid = success and utils.is_ground_truth_valid(ground_truth)
-
-                    # Create challenge table
-                    table_formatter.create_synthetic_challenge_table(
-                        round_id=self.round_id,
-                        challenge_id=challenge_id,
-                        cid=cid_hash,
-                        question=q,
-                        success=is_valid,
-                        ground_truth=ground_truth,
-                        ground_cost=ground_cost,
-                        metrics_data=metrics_data
-                    )
-                    self.round_id += 1
-
-                    question_input = metrics_data.get("input_tokens", 0)
-                    question_cache = metrics_data.get("input_cache_read_tokens", 0)
-                    question_output = metrics_data.get("output_tokens", 0)
-                    
-                    total_input_tokens += question_input
-                    total_input_cache_tokens += question_cache
-                    total_output_tokens += question_output
-
-                    await asyncio.sleep(30)  # brief pause between questions
-
-                # calculate total cost for the project
-                total_cost_info = utils.calculate_token_cost(
-                    input_tokens=total_input_tokens,
-                    output_tokens=total_output_tokens,
-                    input_cache_tokens=total_input_cache_tokens,
-                    model_name=self.llm_synthetic.model_name
-                )
-
-                logger.info(f"=== project {cid_hash} summary ===")
-                logger.info(f"Total Token: {total_cost_info['total_tokens']}")
-                logger.info(f"Input Token: {total_input_tokens} (Actual: {total_cost_info['actual_input_tokens']}, cache: {total_input_cache_tokens})")
-                logger.info(f"Output Token: {total_output_tokens}")
-                logger.info(f"Total Cost: ${total_cost_info['total_cost']:.6f}")
-                logger.info(f"Average Token Price: ${total_cost_info['avg_token_price']:.8f}")
-                logger.info(f"Cost Breakdown - Input: ${total_cost_info['input_cost']:.6f}, Cache: ${total_cost_info['cache_cost']:.6f}, Output: ${total_cost_info['output_cost']:.6f}")
+                challenge_interval = self.challenge_interval
 
         except KeyboardInterrupt:
             logger.info("[ChallengeManager] Challenge loop interrupted by user")
@@ -561,12 +515,10 @@ class ChallengeManager:
             result = response.get('messages', [])[-1].content
 
             if token_usage_metrics is not None:
-                metrics_data = token_usage_metrics.append(cid_hash, phase=Phase.GENERATE_GROUND_TRUTH, response=response, extra = {"round_id": round_id})
-
+                metrics_data = token_usage_metrics.parse(cid_hash, phase=Phase.GENERATE_GROUND_TRUTH, response=response, extra={"round_id": round_id})
             if not result:
                 error = utils.try_get_invalid_tool_messages(response.get('messages', []))
-                if error:
-                    raise RuntimeError(f"[ChallengeManager] - {cid_hash} Failed to generate ground truth. {error}")
+                raise RuntimeError(f"[ChallengeManager] - {cid_hash} Failed to generate ground truth. {error}")
 
             # data = utils.form_training_data(question, block_height, response.get('messages', []), metrics_data)
             # now = time.strftime("%Y-%m-%d", time.localtime())
@@ -581,10 +533,10 @@ class ChallengeManager:
             # Handle specific rate limit errors differently
             if isinstance(e, (dict, str)) and ('429' in str(e) or 'RATE_LIMIT_EXCEEDED' in str(e)):
                 logger.warning(f"[ChallengeManager] Rate limit exceeded for cid: {cid_hash}. Will retry later. Error: {e}")
-                raise  # Re-raise rate limit errors to allow retry logic
             else:
                 logger.error(f"[ChallengeManager] generate_ground_truth error for cid: {cid_hash} {e}\n{traceback.format_exc()}")
-                raise
+            
+            result = f"{e}"
 
         finally:
             return [success, result, utils.fix_float(time.perf_counter() - start_time), metrics_data, model_name]
@@ -597,6 +549,7 @@ class ChallengeManager:
         challenge_id: str,
         question: str,
         block_height: int = 0,
+        is_ip_duplicated: bool = False,
     ):
         synapse = SyntheticNonStreamSynapse(id=challenge_id, uid=uid, cid_hash=cid_hash, question=question, block_height=block_height)
         start_time = time.perf_counter()
@@ -611,6 +564,10 @@ class ChallengeManager:
                 r.dendrite = bt.TerminalInfo(status_code=200)
                 r.status_code = ErrorCode.NOT_HEALTHY.value
                 r.error = "Miner is not healthy"
+            elif is_ip_duplicated:
+                r.dendrite = bt.TerminalInfo(status_code=200)
+                r.status_code = ErrorCode.DUPLICATED_IP.value
+                r.error = "Miner has duplicated IP"
             else:
                 r: SyntheticNonStreamSynapse = await self.dendrite.forward(
                     axons=self.settings.metagraph.axons[uid],

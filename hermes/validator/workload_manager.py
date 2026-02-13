@@ -275,6 +275,7 @@ class WorkloadManager:
                         await self.benchmark.upload(
                             uid=self.V.uid,
                             address=self.V.settings.wallet.hotkey.ss58_address,
+                            version=self.V.settings.version,
                             cid=response.cid_hash.split('_')[0],
                             challenge_id=response.id,
                             challenge_type=ChallengeType.ORGANIC_STREAM.value,
@@ -286,7 +287,9 @@ class WorkloadManager:
 
                             ground_truth=ground_truth[:500] if ground_truth else None,
                             ground_cost=ground_cost,
-                            ground_truth_tools=[json.loads(t) for t in metrics_data.get("tool_calls", [])],
+                            ground_truth_tools=[
+                                parsed for t in metrics_data.get("tool_calls", []) if (parsed := utils.safe_json_loads(t)) is not None
+                            ],
                             ground_input_tokens=metrics_data.get("input_tokens", 0),
                             ground_input_cache_read_tokens=metrics_data.get("input_cache_read_tokens", 0),
                             ground_output_tokens=metrics_data.get("output_tokens", 0),
@@ -305,8 +308,13 @@ class WorkloadManager:
                                 "inputTokens": resp.usage_info.get("input_tokens", 0) if resp.usage_info else 0,
                                 "inputCacheReadTokens": resp.usage_info.get("input_cache_read_tokens", 0) if resp.usage_info else 0,
                                 "outputTokens": resp.usage_info.get("output_tokens", 0) if resp.usage_info else 0,
-                                "toolCalls": [json.loads(t) for t in resp.usage_info.get("tool_calls", [])] if resp.usage_info else [],
-                                "graphqlAgentInnerToolCalls": [json.loads(t) for t in resp.graphql_agent_inner_tool_calls] if resp.graphql_agent_inner_tool_calls else [],
+                                "toolCalls": [
+                                    parsed for t in resp.usage_info.get("tool_calls", []) if (parsed := utils.safe_json_loads(t)) is not None
+                                ] if resp.usage_info else [],
+
+                                "graphqlAgentInnerToolCalls": [
+                                    parsed for t in resp.graphql_agent_inner_tool_calls if (parsed := utils.safe_json_loads(t)) is not None
+                                ] if resp.graphql_agent_inner_tool_calls else [],
                             }
                             for uid, hotkey, elapse_time, truth_score, resp in zip([miner_uid], [hotkey], miners_elapse_time, ground_truth_scores, [response])
                         ],

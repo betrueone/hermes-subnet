@@ -174,3 +174,5 @@ projects/
 
 # Analysis documentation
 .doc/
+deploy/
+wandb/

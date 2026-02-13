@@ -26,6 +26,7 @@ class ErrorCode(Enum):
     AGENT_NOT_FOUND = 2001
     NOT_HEALTHY = 2002
     SUSPICIOUS = 2003
+    DUPLICATED_IP = 2004
 
     ## ============ validator side error ============
     FORWARD_SYNTHETIC_FAILED = 3001
@@ -33,6 +34,7 @@ class ErrorCode(Enum):
     ORGANIC_NO_SELECTED_MINER = 3003
     ORGANIC_NO_AXON = 3004
     ORGANIC_ERROR_RESPONSE = 3005
+    PROCESS_ERROR = 3006
 
 class ChallengeType(Enum):
     SYNTHETIC = 1
@@ -44,3 +46,5 @@ class RoleFlag(Enum):
     MINER = 1
     VALIDATOR = 2
 
+class FailureType(Enum):
+    GENERATE_CHALLENGE = 1

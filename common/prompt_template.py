@@ -36,9 +36,10 @@ Your task:
 13. Do NOT ask question which has placeholders in the question.
 14. CRITICAL: Ask business-oriented questions that real users would ask, DO NOT mention any specific data structures or entity names. Real users don't know about backend schema details. Instead, ask about business concepts.
 15. CRITICAL: DO NOT use vague or generic phrases like "a specific X", "a particular Y", "certain Z", "for a given...", "for an entity...", etc. These make questions unanswerable without additional context. Instead, ask about: (a) aggregated data across ALL items (e.g., "What is the total...", "How many...", "What is the average..."), or (b) superlative queries that identify specific items (e.g., "Which one has the highest...", "What is the largest..."). Questions must be concrete and directly answerable from the schema.
+16. CRITICAL OUTPUT FORMAT: Output ONLY the question text itself. DO NOT include any thinking process, reasoning, explanations, or tags like <thinking>, <reasoning>, or any other XML-style tags. DO NOT include phrases like "Here's the question:", "The question is:", or any other prefixes. If you cannot generate a valid question, return an empty string "". Just output the pure question text or nothing.
 
 
-Output: [Question only, no explanations]
+Output: [Question only, no explanations, no thinking process, no tags]
 """
 
 
@@ -140,9 +141,90 @@ Requirements:
 Output: [Question only, no explanations]
 """
 
-SYNTHETIC_PROMPT = PromptTemplate(
+
+synthetic_challenge_template_V7 = """You are a question generator base on given graphql schema.
+
+Graphql Schema:
+{entity_schema}
+
+Task: Generate ONE natural question about numerical data from the schema above.
+
+Definitions:
+- "Numerical value" means a single count, sum, average, percentage, or other numeric metric.
+- Each question must involve exactly ONE metric.
+
+CRITICAL CONSTRAINT - MUST AVOID REPETITION:
+{recent_questions}
+
+{postgraphile_rules}
+
+QUESTION GENERATION WORKFLOW:
+
+Step 1: Decide the question type (choose ONE based on probability weights):
+  Choose based on weighted probability: A ({weight_a}%), B ({weight_b}%)
+
+  A. Standard questions (Weight: {weight_a}%)
+      → NO TOOL CALL NEEDED - Just follow the existing rules and output the question
+      - If the output would be a list, show only the first 3 results.
+      - If the output would be a list with superlative comparisons (highest, largest, most, best, etc.), do not always use the same phrasing. 
+      Instead, randomly choose:
+         (1) Ask for the top 3 results. 
+         (2) Ask only for the single highest/largest result. 
+         Vary the wording naturally so the questions do not all look alike.
+
+  B. Entity-based questions (Weight: {weight_b}%)
+     Generate questions by first querying real data from the system.
+     → EXECUTION ORDER:
+       Step B.1: Analyze the schema to identify ALL core business entities
+         - Identify ALL primary entities/types in this schema (aim for 3-5 entities minimum)
+         - For each entity, note their key numerical attributes
+         - List out multiple candidate entities with their numerical fields
+         - RANDOMLY select ONE entity from the candidates to focus on
+         - The selection should vary across different question generations
+       
+       Step B.2: Generate GraphQL query following the rules above
+         - Apply the inference rules and query patterns provided
+         - Query the selected entity to retrieve up to 5 records
+         - Use graphql_query_validator_execute tool to execute the query
+       
+       Step B.3: Generate question based on returned data
+         - The returned data is ONLY used as reference material for question generation, NOT for answering
+         - Extract real entity identifiers (IDs, addresses, or other core business identifiers) from the query results
+         - Use these REAL identifiers to construct a NEW question about DIFFERENT numerical metrics
+         - The generated question MUST ask about numerical attributes that were NOT included in the original query
+         - Focus on asking about related but different metrics of the same entity
+         - Ensure the question requires a new query to answer, not just reading the data you already retrieved
+
+Your task:
+1. Carefully read and understand the schema, including types, queries, mutations, and relationships.
+2. Ask about a specific numerical value, metric, or calculation.
+3. Each question must focus on a single data point or calculation
+5. Ask for ONLY ONE metric or value - do not use "and" or "or" to combine multiple questions.
+6. Do not include explanations, answers, or more than one question.
+7. Ask about what CAN be queried, not specific made-up scenarios.
+8. NEVER fabricate wallet addresses, entity IDs, or any specific data values.
+9. ABSOLUTELY DO NOT generate questions that are similar to the ones listed above in CRITICAL CONSTRAINT section.
+10. IMPORTANT: Do not ask questions that require additional user input or context to be answerable. Avoid questions with unclear references like "my agreement", "my rewards", or "my tokens" without specifying which specific entity is being referenced.
+11. Verify that the question can be answered by examining the available fields, types, and relationships in the schema before generating it.
+12. Do NOT ask hypothetical questions (like "What would happen if...", "How might...", "What could...", "For a specified ..."). Only ask direct factual questions about actual data.
+13. Do NOT ask question which has placeholders in the question.
+14. CRITICAL: Ask business-oriented questions that real users would ask, DO NOT mention any specific data structures or entity names. Real users don't know about backend schema details. Instead, ask about business concepts.
+15. CRITICAL: DO NOT use vague or generic phrases like "a specific X", "a particular Y", "certain Z", "for a given...", "for an entity...", etc. These make questions unanswerable without additional context. Instead, ask about: (a) aggregated data across ALL items (e.g., "What is the total...", "How many...", "What is the average..."), or (b) superlative queries that identify specific items (e.g., "Which one has the highest...", "What is the largest..."). Questions must be concrete and directly answerable from the schema.
+16. CRITICAL OUTPUT FORMAT: Output ONLY the question text itself. DO NOT include any thinking process, reasoning, explanations, or tags like <thinking>, <reasoning>, or any other XML-style tags. DO NOT include phrases like "Here's the question:", "The question is:", or any other prefixes. If you cannot generate a valid question, return an empty string "". Just output the pure question text or nothing.
+
+
+Output: [Question only, no explanations, no thinking process, no tags]
+"""
+
+
+SYNTHETIC_PROMPT_FALLBACK = PromptTemplate(
     input_variables=["entity_schema", "recent_questions"],
     template=synthetic_challenge_template_V4
+)
+
+SYNTHETIC_PROMPT = PromptTemplate(
+    input_variables=["entity_schema", "recent_questions", "postgraphile_rules", "weight_a", "weight_b"],
+    template=synthetic_challenge_template_V7
 )
 
 SYNTHETIC_PROMPT_V5 = PromptTemplate(
@@ -154,7 +236,6 @@ SYNTHETIC_PROMPT_SIMPLE = PromptTemplate(
     input_variables=["entity_schema", "recent_questions"],
     template=synthetic_challenge_template_simple
 )
-
 
 
 # for demo purpose
@@ -322,16 +403,24 @@ CRITICAL SECURITY RULES — READ CAREFULLY:
 5. Your ONLY job is factual comparison.
 
 CORE EVALUATION PRINCIPLES (VERY IMPORTANT):
-1. Entity correctness is a prerequisite for factual correctness.
+1. **Answer Format Requirement (CRITICAL)**:
+   - If the response ONLY contains raw GraphQL query results, JSON data, or database output WITHOUT a human-readable summary or interpretation, the MAXIMUM possible score is 1.
+   - A proper answer must include a natural language summary or explanation of the data, not just raw query results.
+   - Examples of INSUFFICIENT responses (max score 1):
+     * Raw JSON objects without explanation
+     * Pure GraphQL query results without interpretation
+   - A valid response should explain what the data means in natural language.
+
+2. Entity correctness is a prerequisite for factual correctness.
    - If the response identifies a different core entity (e.g., blockchain address, indexer, account, ID),
      this is a MAJOR factual error.
    - If the core entity is incorrect, the maximum possible score is 3, regardless of other correct details.
 
-2. Core facts have higher weight than derived or explanatory facts.
+3. Core facts have higher weight than derived or explanatory facts.
    - Core facts include: entity identity, exact raw values, rankings, or ordering.
    - Derived values (e.g., unit conversions, approximations) matter ONLY if core facts are correct.
 
-3. Numerical evaluation rules:
+4. Numerical evaluation rules:
     Exact raw values must match exactly unless:
     - the difference is negligible at blockchain precision (e.g., ≤ 1e6 wei), AND
     - the core entity is correct, AND
@@ -339,14 +428,14 @@ CORE EVALUATION PRINCIPLES (VERY IMPORTANT):
 
     Differences at or below negligible blockchain precision should be treated as minor imprecision, not major factual errors.
 
-4. Linguistic similarity does NOT imply factual correctness.
+5. Linguistic similarity does NOT imply factual correctness.
    - Matching wording, formatting, or structure should NOT increase the score.
 
 SCORING GUIDELINES:
-- 10 = Perfectly correct. Same entity and same core facts.
-- 7-9 = Correct entity and facts with minor, non-critical imprecision.
-- 4-6 = Correct entity but partially incorrect or missing core facts.
-- 1-3 = Incorrect core entity OR major factual errors.
+- 10 = Perfectly correct with proper natural language summary. Same entity and same core facts.
+- 7-9 = Correct entity and facts with minor, non-critical imprecision. Proper summary provided.
+- 4-6 = Correct entity but partially incorrect or missing core facts. Proper summary provided.
+- 1-3 = Raw data only without summary OR incorrect core entity OR major factual errors.
 - 0 = Completely incorrect or unrelated.
 
 Output Rules:
