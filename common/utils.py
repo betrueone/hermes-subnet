@@ -377,6 +377,8 @@ def extract_tool_calls(messages: list[BaseMessage]) -> list[str]:
     return tool_calls
 
 def get_func_name(f):
+    if hasattr(f, "name") and isinstance(getattr(f, "name"), str):
+        return f.name
     if hasattr(f, "__name__"):
         return f.__name__
     elif hasattr(f, "func") and hasattr(f.func, "__name__"):
@@ -624,6 +626,33 @@ async def get_latest_block(endpoint: str, node_type: str) -> int | None:
     except Exception as e:
         logger.error(f"Error getting latest block from {endpoint}: {e}")
         return None
+
+
+async def run_graph_with_step_timings(graph, inputs: dict):
+    """
+    Run graph via astream (v2), collect per-step wall-clock elapsed times.
+    Returns (final_state, step_timings).
+    step_timings: list of {"step": str, "elapsed": float} in order.
+    """
+    step_timings: list[dict] = []
+    r = None
+    t_prev = time.perf_counter()
+    async for event in graph.astream(inputs, version="v2"):
+        for key, value in event.items():
+            t_now = time.perf_counter()
+            step_timings.append({"step": key, "elapsed": round(t_now - t_prev, 3)})
+            t_prev = t_now
+            if key == "final":
+                r = value
+    return r, step_timings
+
+
+def format_step_timings(step_timings: list[dict]) -> str:
+    """Format step_timings for display, e.g. 'call_model 2.1s, tools 5.3s, final 0.0s'."""
+    if not step_timings:
+        return "—"
+    return ", ".join(f"{s['step']} {s['elapsed']}s" for s in step_timings)
+
 
 def kill_process_group():
     try:

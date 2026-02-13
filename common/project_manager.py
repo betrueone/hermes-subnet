@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import asdict, dataclass
 import json
 import os
@@ -420,3 +421,10 @@ Make each capability very specific to the entities found in the schema."""
         file = dir / "config.json"
         with open(file, "w") as f:
             json.dump(asdict(config), f, indent=2)
+
+async def main():
+    pm = ProjectManager(ChatOpenAI(model="gpt-4o-mini", temperature=1), target_dir=Path(__file__).parent.parent / "projects" / "miner")
+    await pm.pull()
+
+if __name__ == "__main__":
+    asyncio.run(main())

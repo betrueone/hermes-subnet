@@ -1,3 +1,4 @@
+import asyncio
 import importlib
 import json
 from pathlib import Path
@@ -136,7 +137,7 @@ class AgentManager:
                 miner_tools.append(_tool)
 
                 deleted = [name for name in prev_tools.keys() if name not in current_tools]
-            
+
             if (not project) or (created or updated or deleted):
                 config_path = project_dir / 'config.json'
 
@@ -167,6 +168,7 @@ class AgentManager:
 
                 def make_call_graphql_agent(agent: GraphQLAgent):
                     async def call_graphql_agent(state: ExtendedMessagesState) -> dict:
+                        logger.info("⭐ 4. call_graphql_agent")
                         messages = state["messages"]
                         human_messages = [m for m in messages if m.type == 'human']
 
@@ -241,12 +243,18 @@ class AgentManager:
                     else:
                         raise ValueError(f"No messages found in input state to tool_edge: {state}")
 
+                    logger.info("⭐ 5. tool_condition")
+                    logger.info(f"⭐ 5. tool_condition - ai_message: {ai_message}")
                     if hasattr(ai_message, "tool_calls") and len(ai_message.tool_calls) > 0:
                         # Check if any tool call is graphql_agent_tool
                         for tool_call in ai_message.tool_calls:
                             if tool_call['name'] == "graphql_agent_tool":
+                                logger.info("⭐ 6. tool_condition - return call_graphql_agent")
                                 return "call_graphql_agent"
+                        tool_names = [tc['name'] for tc in ai_message.tool_calls]
+                        logger.info(f"⭐ 7. tool_condition - return tools: {tool_names}")
                         return "tools"
+                    logger.info("⭐ 8. tool_condition - return final")
                     return "final"
 
                 # logger.info(f"[AgentManager] Project {cid_hash} - Detected changes in tools. Created: {[utils.get_func_name(t) for t in created]}, Updated: {[utils.get_func_name(t) for t in updated]}, Deleted: {deleted}")
@@ -260,8 +268,9 @@ class AgentManager:
                         response_messages = None
                         # logger.info(f" call_model - messages: {messages} ")
                         try:
+                            logger.info("⭐ 2. make_call_model")
                             response_messages = await llm.ainvoke(messages)
-                            # logger.info(f" call_model - response: {response_messages} ")
+                            logger.info(f"⭐ 2. make_call_model - response: {response_messages} ")
                         except Exception as e:
                             logger.error(f" call_model - error: {e} ")
                             # response_messages = AIMessage(content=f"Error invoking LLM: {e}")
@@ -272,10 +281,24 @@ class AgentManager:
                 def make_final_node():
                     async def final_func(state: ExtendedMessagesState) -> int:
                         # messages = state["messages"]
-                        # logger.info(f" final - state: {state} ")
                         return state
                     return final_func
 
+                # Wrap ToolNode to log execution
+                # tool_node = ToolNode(miner_tools)
+                # async def wrapped_tool_node(state):
+                #     logger.info(f"🔧 ToolNode invoked with tool_calls: {[tc['name'] for tc in state['messages'][-1].tool_calls] if hasattr(state['messages'][-1], 'tool_calls') else 'N/A'}")
+                #     try:
+                #         result = await tool_node.ainvoke(state)
+                #         logger.info(f"🔧 ToolNode result messages: {len(result.get('messages', []))} message(s)")
+                #         for msg in result.get('messages', []):
+                #             logger.info(f"🔧 ToolNode message content (first 500 chars): {str(msg.content)[:500]}")
+                #         return result
+                #     except Exception as e:
+                #         logger.error(f"🔧 ToolNode exception: {e}")
+                #         import traceback
+                #         logger.error(traceback.format_exc())
+                #         raise
 
                 builder = StateGraph(ExtendedMessagesState)
                 builder.add_node("call_model", make_call_model(llm_with_tools))
@@ -320,3 +343,10 @@ class AgentManager:
                 config.get('graphql_agent', None)
             )
         return self.miner_agent
+
+async def main():
+    am = AgentManager(save_project_dir=Path(__file__).parent.parent / "projects" / "miner", llm_synthetic=ChatOpenAI(model="gpt-5-mini", temperature=1))
+    await am.start(pull=True, role="miner", silent=False)
+
+if __name__ == "__main__":
+    asyncio.run(main())

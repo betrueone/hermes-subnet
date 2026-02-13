@@ -44,6 +44,16 @@ ROLE = "miner"
 settings.load_env_file(ROLE)
 LOGGER_DIR = os.getenv("LOGGER_DIR", f"logs/{ROLE}")
 
+WHITELISTED_VALIDATORS = [
+    "5C5XL8kUqwzZ9WQBrppjTxtMkNZHUKtzEq8Ath4iDWm6RUEa",
+    "5CDgbBhSpePngE1Ef3LTvfu3opMD2wEXn4NqfUfJXDm5Ks82",
+    "5C9yALD6gjxhzyawXomy4E6ykcYm8bKXTJrGnQNa498Hsn82",
+    "5CsvRJXuR955WojnGMdok1hbhffZyB4N5ocrv82f3p5A2zVp",
+    "5FLoWCDovMPeH3Gv4syQSZ8TuKcMv6N27g8diDU8zJSeRv8m",
+    "5G9hfkx9wGB1CLMT9WXkpHSAiYzjZb5o1Boyq4KAdDhjwrc5",
+    "5E2LP6EnZ54m3wS8s1yPvD5c3xo71kQroBw7aUVK32TKeZ5u",
+    "5Gn3dRM5C6KjZ6u46PcjU54cYsmyKRtsM8TQZpcn8s1CNEYm",
+]
 
 class Miner(BaseNeuron):
 
@@ -82,24 +92,43 @@ class Miner(BaseNeuron):
                 token_usage_metrics=self.token_usage_metrics,
             )
 
-            def allow_all(synapse: CapacitySynapse) -> None:
-                return None
+            def _reject_if_not_whitelisted(synapse) -> None:
+                hotkey = getattr(synapse.dendrite, "hotkey", None)
+                if not hotkey or hotkey not in WHITELISTED_VALIDATORS:
+                    raise ValueError(
+                        f"Rejecting request from non-whitelisted validator: {hotkey}"
+                    )
+
+            def verify_organic_stream(synapse: OrganicStreamSynapse) -> None:
+                _reject_if_not_whitelisted(synapse)
+
+            def verify_organic_non_stream(synapse: OrganicNonStreamSynapse) -> None:
+                _reject_if_not_whitelisted(synapse)
+
+            def verify_synthetic(synapse: SyntheticNonStreamSynapse) -> None:
+                _reject_if_not_whitelisted(synapse)
+
+            def verify_capacity(synapse: CapacitySynapse) -> None:
+                _reject_if_not_whitelisted(synapse)
 
             self.axon.attach(
                 forward_fn=self.forward_organic_stream,
+                verify_fn=verify_organic_stream,
             )
 
             self.axon.attach(
-                forward_fn=self.forward_organic_non_stream
+                forward_fn=self.forward_organic_non_stream,
+                verify_fn=verify_organic_non_stream,
             )
 
             self.axon.attach(
-                forward_fn=self.forward_synthetic_non_stream
+                forward_fn=self.forward_synthetic_non_stream,
+                verify_fn=verify_synthetic,
             )
 
             self.axon.attach(
                 forward_fn=self.forward_capacity,
-                verify_fn=allow_all
+                verify_fn=verify_capacity,
             )
 
             # self.axon.serve(netuid=self.settings.netuid, subtensor=self.settings.subtensor)
@@ -185,10 +214,44 @@ class Miner(BaseNeuron):
             task: SyntheticNonStreamSynapse | OrganicNonStreamSynapse,
             log: Logger,
     ) -> SyntheticNonStreamSynapse | OrganicNonStreamSynapse:
+        
+        before = time.perf_counter()
         question = task.get_question()
 
         cid_hash = task.cid_hash
         graph, graphql_agent = self.agent_manager.get_miner_agent(cid_hash)
+
+        if graphql_agent:
+            response, _, _ = await graphql_agent.query_no_stream(
+                question,
+                prompt_cache_key=f"{cid_hash}_{before}",
+                is_synthetic=True,
+                block_height=task.block_height
+            )
+            messages = response.get('messages', [])
+            result = messages[-1].content if messages else None
+            if result:
+                task.response = result
+                task.status_code = ErrorCode.SUCCESS
+                task.error = None
+                task.elapsed_time = utils.fix_float(time.perf_counter() - before)
+
+                print(f"🔥🔥🔥 task returning: {task}")
+
+                self._schedule_postprocess(
+                    answer=result,
+                    usage_info={},
+                    tool_hit=[],
+                    graphql_agent_inner_tool_calls=[],
+                    error=None,
+                    status_code=ErrorCode.SUCCESS,
+                    tag="GraphQL Agent",
+                    task=task,
+                    elapsed=task.elapsed_time,
+                    log=log,
+                    type=0,
+                )
+                return task
 
         if isinstance(task, SyntheticNonStreamSynapse):
             tag = "Synthetic"
@@ -218,7 +281,6 @@ class Miner(BaseNeuron):
         error = None
         status_code = ErrorCode.SUCCESS
 
-        before = time.perf_counter()
 
         try:
             if not graph:
@@ -244,18 +306,18 @@ class Miner(BaseNeuron):
 
         elapsed = utils.fix_float(time.perf_counter() - before)
         
-        self.print_table(
+        self._schedule_postprocess(
             answer=answer,
             usage_info=usage_info,
             tool_hit=tool_hit,
             graphql_agent_inner_tool_calls=graphql_agent_inner_tool_calls,
             error=error,
             status_code=status_code,
-
             tag=tag,
             task=task,
             elapsed=elapsed,
             log=log,
+            type=type,
         )
 
         task.response = response
@@ -266,16 +328,6 @@ class Miner(BaseNeuron):
         task.miner_model_name = self.llm.model_name
         task.graphql_agent_model_name = graphql_agent.llm.model_name
 
-        self.put_db(
-            type=type,
-            answer=answer,
-            usage_info=usage_info,
-            tool_hit=tool_hit,
-            error=error,
-            status_code=status_code,
-            elapsed=elapsed,
-            task=task,
-        )
         return task
 
     def get_answer(
@@ -315,6 +367,127 @@ class Miner(BaseNeuron):
         
         return answer, usage_info, tool_hit, graphql_agent_inner_tool_calls, response, error, status_code
         
+    def _schedule_postprocess(
+            self,
+            answer: str,
+            usage_info: str,
+            tool_hit: list,
+            graphql_agent_inner_tool_calls: list,
+            error: str,
+            status_code: ErrorCode,
+            tag: str,
+            task: SyntheticNonStreamSynapse | OrganicNonStreamSynapse | OrganicStreamSynapse,
+            elapsed: float,
+            log: Logger,
+            type: int,
+    ) -> None:
+        try:
+            asyncio.create_task(
+                self._post_process_async(
+                    answer=answer,
+                    usage_info=usage_info,
+                    tool_hit=tool_hit,
+                    graphql_agent_inner_tool_calls=graphql_agent_inner_tool_calls,
+                    error=error,
+                    status_code=status_code,
+                    tag=tag,
+                    task=task,
+                    elapsed=elapsed,
+                    log=log,
+                    type=type,
+                )
+            )
+        except RuntimeError:
+            # If no running loop (should be rare), run synchronously.
+            self._post_process_sync(
+                answer=answer,
+                usage_info=usage_info,
+                tool_hit=tool_hit,
+                graphql_agent_inner_tool_calls=graphql_agent_inner_tool_calls,
+                error=error,
+                status_code=status_code,
+                tag=tag,
+                task=task,
+                elapsed=elapsed,
+                log=log,
+                type=type,
+            )
+
+    async def _post_process_async(
+            self,
+            answer: str,
+            usage_info: str,
+            tool_hit: list,
+            graphql_agent_inner_tool_calls: list,
+            error: str,
+            status_code: ErrorCode,
+            tag: str,
+            task: SyntheticNonStreamSynapse | OrganicNonStreamSynapse | OrganicStreamSynapse,
+            elapsed: float,
+            log: Logger,
+            type: int,
+    ) -> None:
+        self.put_db(
+            type=type,
+            answer=answer,
+            usage_info=usage_info,
+            tool_hit=tool_hit,
+            error=error,
+            status_code=status_code,
+            elapsed=elapsed,
+            task=task,
+        )
+        await asyncio.to_thread(
+            self.print_table,
+            answer=answer,
+            usage_info=usage_info,
+            tool_hit=tool_hit,
+            graphql_agent_inner_tool_calls=graphql_agent_inner_tool_calls,
+            error=error,
+            status_code=status_code,
+            tag=tag,
+            task=task,
+            elapsed=elapsed,
+            log=log,
+        )
+
+    def _post_process_sync(
+            self,
+            answer: str,
+            usage_info: str,
+            tool_hit: list,
+            graphql_agent_inner_tool_calls: list,
+            error: str,
+            status_code: ErrorCode,
+            tag: str,
+            task: SyntheticNonStreamSynapse | OrganicNonStreamSynapse | OrganicStreamSynapse,
+            elapsed: float,
+            log: Logger,
+            type: int,
+    ) -> None:
+        self.put_db(
+            type=type,
+            answer=answer,
+            usage_info=usage_info,
+            tool_hit=tool_hit,
+            error=error,
+            status_code=status_code,
+            elapsed=elapsed,
+            task=task,
+        )
+        self.print_table(
+            answer=answer,
+            usage_info=usage_info,
+            tool_hit=tool_hit,
+            graphql_agent_inner_tool_calls=graphql_agent_inner_tool_calls,
+            error=error,
+            status_code=status_code,
+            tag=tag,
+            task=task,
+            elapsed=elapsed,
+            log=log,
+        )
+
     def print_table(
             self,
             answer: str,
@@ -378,11 +551,13 @@ class Miner(BaseNeuron):
         })
 
     async def forward_synthetic_non_stream(self, task: SyntheticNonStreamSynapse) -> SyntheticNonStreamSynapse:
+        print(f"forward_synthetic_non_stream: {task.get_question()}")
         log = logger.bind(source=task.dendrite.hotkey)
         await self._handle_task(task, log)
         return task
 
     async def forward_organic_stream(self, synapse: OrganicStreamSynapse) -> StreamingSynapse.BTStreamingResponse:
+        print(f"forward_organic_stream: {synapse}")
         from starlette.types import Send
         log = logger.bind(source=synapse.dendrite.hotkey)
         log.info(f"\n🤖 [Miner] Received organic stream: {synapse.id}")
@@ -427,9 +602,12 @@ class Miner(BaseNeuron):
 
                         if r.get('error', None) is not None:
                             message = r.get('error')
+                        chunk_size = int(os.getenv("STREAM_CHUNK_SIZE", 256))
+                        chunk_size = max(1, chunk_size)
+                        chunk_delay = float(os.getenv("STREAM_CHUNK_DELAY", "0"))
                         idx = 0
                         while idx < len(message):
-                            chunk = message[idx:idx+10]
+                            chunk = message[idx:idx + chunk_size]
                             # Send data chunks in JSONL format
                             data_line = json.dumps({
                                 "type": "data",
@@ -440,8 +618,9 @@ class Miner(BaseNeuron):
                                 "body": data_line.encode('utf-8'),
                                 "more_body": True
                             })
-                            await asyncio.sleep(0.25)
-                            idx += 10
+                            if chunk_delay > 0:
+                                await asyncio.sleep(chunk_delay)
+                            idx += chunk_size
                 
             elapsed = utils.fix_float(time.perf_counter() - before)
             synapse.elapsed_time = elapsed
@@ -474,7 +653,7 @@ class Miner(BaseNeuron):
                 "more_body": False
             })
 
-            self.print_table(
+            self._schedule_postprocess(
                 answer=answer,
                 usage_info=usage_info,
                 tool_hit=tool_hit,
@@ -485,21 +664,13 @@ class Miner(BaseNeuron):
                 task=synapse,
                 elapsed=elapsed,
                 log=log,
-            )
-            self.put_db(
                 type=2,
-                answer=answer,
-                usage_info=usage_info,
-                tool_hit=tool_hit,
-                error=error,
-                status_code=status_code,
-                elapsed=elapsed,
-                task=synapse,
             )
 
         return synapse.create_streaming_response(token_streamer)
 
     async def forward_organic_non_stream(self, task: OrganicNonStreamSynapse) -> OrganicNonStreamSynapse:
+        print(f"forward_organic_non_stream: {task}")
         log = logger.bind(source=task.dendrite.hotkey)
         await self._handle_task(task, log)
         return task
